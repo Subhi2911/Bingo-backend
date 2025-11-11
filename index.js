@@ -140,6 +140,16 @@ io.on("connection", (socket) => {
       }, 500);
     }
   });
+  //game end
+  socket.on("game_end", ({ roomCode }) => {
+    const room = games[roomCode];
+    room.finished.push(socket.id);
+
+    if (room.finished.length === room.players.length - 1) {
+      io.to(roomCode).emit("show_results", room.finished);
+    }
+  });
+
 
   // Disconnect
   socket.on("disconnect", () => {

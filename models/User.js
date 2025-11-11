@@ -40,6 +40,20 @@ const UserSchema = mongoose.Schema({
         type: mongoose.Schema.Types.ObjectId, 
         ref: 'User' ,
     }],
+    wins:[{
+        classic:{
+            type:Number ,
+        },
+        fast:{
+            type:Number,
+        },
+        power:{
+            type:Number,
+        },
+        private:{
+            type:Number,
+        }
+    }],
     otp: String,
     otpExpiry: Date,
     otpVerified: { type: Boolean, default: false } 
