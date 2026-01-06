@@ -1,87 +1,109 @@
 const games = {};
 let queue = [];
+const socketUserMap = {}; // socket.id -> userId
 
-require('dotenv').config({ path: '.env.local' });
-const express = require('express');
-const cors = require('cors');
-const connectToMongo = require('./db');
-const { createServer } = require('http');
-const { Server } = require('socket.io');
+require("dotenv").config({ path: ".env.local" });
+
+const express = require("express");
+const cors = require("cors");
+const connectToMongo = require("./db");
+const { createServer } = require("http");
+const { Server } = require("socket.io");
+const Room = require("./models/Room");
 
 // Initialize Express
 const app = express();
 const port = 5000;
 
-// Create HTTP server for sockets
+// HTTP server
 const httpServer = createServer(app);
 
-// Initialize Socket.IO
+// Socket.IO
 const io = new Server(httpServer, {
   cors: {
-    origin: ['http://localhost:8081'],
-    methods: ['GET', 'POST', 'PUT', 'DELETE'],
+    origin: ["http://localhost:8081"],
     credentials: true,
   },
 });
 
-// Connect to MongoDB
+// MongoDB
 connectToMongo();
 
 // Middleware
-app.use(cors({
-  origin: ['http://localhost:8081'],
-  methods: ['GET', 'POST', 'PUT', 'DELETE'],
-  credentials: true,
-}));
-
+app.use(cors({ origin: ["http://localhost:8081"], credentials: true }));
 app.use(express.json());
 
-// API Routes
-app.use('/api/auth', require('./routes/auth'));
-app.use('/api/emailverification', require('./routes/emailverification'));
+// Routes
+app.use("/api/auth", require("./routes/auth"));
+app.use("/api/emailverification", require("./routes/emailverification"));
+app.use("/api/games", require("./routes/gameRoutes"));
 
-// Socket.IO Handlers
+// ================= SOCKET.IO =================
 io.on("connection", (socket) => {
-  console.log("User connected:", socket.id);
+  console.log("🟢 User connected:", socket.id);
 
-  // Join/Create room
-  socket.on("join_room", ({ roomCode, username }) => {
-    if (!games[roomCode]) {
-      games[roomCode] = {
-        players: [],
-        turns: [],
-        currentTurn: 0,
-        picked: []
-      };
+  // ================= JOIN ROOM =================
+  socket.on("join_room", async ({ roomCode, userId, username, avatar = "" }) => {
+    try {
+      socket.join(roomCode);
+      socketUserMap[socket.id] = userId;
+
+      // MongoDB (no duplicates)
+      await Room.findOneAndUpdate(
+        { code: roomCode },
+        {
+          $setOnInsert: { status: "waiting", turn: 0, selected: [] },
+          $addToSet: {
+            players: {
+              userId,
+              username,
+              avatar,
+            },
+          },
+        },
+        { upsert: true, new: true }
+      );
+
+      // In-memory game
+      if (!games[roomCode]) {
+        games[roomCode] = {
+          players: [],
+          turns: [],
+          currentTurn: 0,
+          picked: [],
+          finished: [],
+        };
+      }
+
+      // Prevent duplicate users
+      const existing = games[roomCode].players.find(
+        (p) => p.userId === userId
+      );
+
+      if (existing) {
+        existing.socketId = socket.id; // reconnect case
+      } else {
+        games[roomCode].players.push({
+          userId,
+          socketId: socket.id,
+          username,
+        });
+      }
+
+      io.to(roomCode).emit("update_players", games[roomCode].players);
+
+      console.log(`✅ ${username} joined room ${roomCode}`);
+    } catch (err) {
+      console.error(err);
+      socket.emit("error", "Failed to join room");
     }
-
-    // Add player if not already in room
-    if (!games[roomCode].players.some(p => p.id === socket.id)) {
-      games[roomCode].players.push({ id: socket.id, username });
-    }
-
-    socket.join(roomCode);
-
-    // Emit updated player list
-    io.to(roomCode).emit("update_players", games[roomCode].players);
-
-    // If game has started, send turn info to new player
-    const game = games[roomCode];
-    if (game.turns.length > 0) {
-      socket.emit("turn_order", game.turns);
-      socket.emit("current_turn", game.turns[game.currentTurn]);
-      socket.emit("number_picked", game.picked);
-    }
-
-    console.log(`Player joined room: ${roomCode}`);
   });
 
-  // Start game manually
+  // ================= START GAME =================
   socket.on("start_game", (roomCode) => {
     const game = games[roomCode];
     if (!game) return;
 
-    // Shuffle players for turn order
     game.turns = [...game.players].sort(() => Math.random() - 0.5);
     game.currentTurn = 0;
 
@@ -89,94 +111,136 @@ io.on("connection", (socket) => {
     io.to(roomCode).emit("current_turn", game.turns[0]);
   });
 
-  // Number selection
-  socket.on("select_number", ({ roomCode, number }) => {
+  // ================= NUMBER PICK =================
+  socket.on("select_number", async ({ roomCode, number }) => {
     const game = games[roomCode];
     if (!game) return;
 
-    // Only allow current player to pick
-    if (!game.turns[game.currentTurn] || socket.id !== game.turns[game.currentTurn].id) return;
+    const current = game.turns[game.currentTurn];
+    if (!current || current.socketId !== socket.id) return;
 
     if (!game.picked.includes(number)) {
       game.picked.push(number);
+
+      await Room.updateOne(
+        { code: roomCode },
+        { $addToSet: { selected: number } }
+      );
     }
 
-    // Broadcast picked numbers
     io.to(roomCode).emit("number_picked", game.picked);
 
-    // Move to next turn
     game.currentTurn = (game.currentTurn + 1) % game.turns.length;
     io.to(roomCode).emit("current_turn", game.turns[game.currentTurn]);
   });
 
-  // Matchmaking
-  socket.on("find_match", ({ username, size }) => {
-    queue.push({ id: socket.id, username, size });
-    const group = queue.filter(p => p.size === size);
+  // ================= MATCHMAKING =================
+  socket.on("find_match", async ({ userId, username, avatar = "", size }) => {
+    const alreadyQueued = queue.find(p => p.userId === userId);
+    if (!alreadyQueued) {
+      queue.push({ socketId: socket.id, userId, username, avatar, size });
+    }
+
+    const group = queue
+      .filter(p => p.size === size)
+      .filter(
+        (p, i, arr) =>
+          arr.findIndex(x => x.userId === p.userId) === i
+      );
+
+    console.log(
+      "MATCH GROUP:",
+      group.map(p => p.username)
+    );
 
     if (group.length >= size) {
       const players = group.slice(0, size);
-      players.forEach(p => {
-        const index = queue.findIndex(q => q.id === p.id);
-        if (index !== -1) queue.splice(index, 1);
+
+      players.forEach((p) => {
+        const i = queue.findIndex((q) => q.socketId === p.socketId);
+        if (i !== -1) queue.splice(i, 1);
       });
 
       const roomCode = "ROOM" + Math.floor(Math.random() * 999999);
-      games[roomCode] = { players, turns: [], currentTurn: 0, picked: [] };
 
-      // Join players to room
-      players.forEach(p => io.sockets.sockets.get(p.id)?.join(roomCode));
+      games[roomCode] = {
+        players,
+        turns: [],
+        currentTurn: 0,
+        picked: [],
+        finished: [],
+      };
 
-      // Notify players match found
-      io.to(roomCode).emit("match_found", { roomCode, players });
+      await Room.create({
+        code: roomCode,
+        players: players.map((p) => ({
+          userId: p.userId,
+          username: p.username,
+          avatar: p.avatar,  // now avatar is included
+        })),
+        status: "waiting",
+        turn: 0,
+        selected: [],
+      });
 
-      // Start game after short delay
+
+      players.forEach((p) =>
+        io.sockets.sockets.get(p.socketId)?.join(roomCode)
+      );
+      console.log(players);
+      players.forEach((p) => {
+        io.to(p.socketId).emit("match_found", {
+          roomCode,
+          players: players.map(x => ({
+            userId: x.userId,
+            username: x.username,
+            avatar: x.avatar
+          }))
+        });
+      });
+
       setTimeout(() => {
         const game = games[roomCode];
         game.turns = [...players].sort(() => Math.random() - 0.5);
         game.currentTurn = 0;
+
         io.to(roomCode).emit("turn_order", game.turns);
         io.to(roomCode).emit("current_turn", game.turns[0]);
       }, 500);
     }
   });
-  //game end
-  socket.on("game_end", ({ roomCode }) => {
-    const room = games[roomCode];
-    room.finished.push(socket.id);
 
-    if (room.finished.length === room.players.length - 1) {
-      io.to(roomCode).emit("show_results", room.finished);
-    }
-  });
-
-
-  // Disconnect
-  socket.on("disconnect", () => {
+  // ================= DISCONNECT =================
+  socket.on("disconnect", async () => {
     console.log("❌ User disconnected:", socket.id);
 
-    Object.keys(games).forEach(roomCode => {
+    const userId = socketUserMap[socket.id];
+    delete socketUserMap[socket.id];
+
+    if (!userId) return;
+
+    await Room.updateOne(
+      { "players.userId": userId },
+      { $pull: { players: { userId } } }
+    ).catch(console.error);
+
+    Object.keys(games).forEach((roomCode) => {
       const game = games[roomCode];
       if (!game) return;
 
-      game.players = game.players.filter(p => p.id !== socket.id);
+      game.players = game.players.filter((p) => p.userId !== userId);
+      game.turns = game.turns.filter((p) => p.userId !== userId);
 
       if (game.players.length === 0) {
         delete games[roomCode];
       } else {
         io.to(roomCode).emit("update_players", game.players);
-
-        // If current turn player left, move to next turn
-        if (game.turns.length > 0 && game.turns[game.currentTurn]?.id === socket.id) {
-          game.currentTurn = game.currentTurn % game.turns.length;
-          io.to(roomCode).emit("current_turn", game.turns[game.currentTurn]);
-        }
       }
     });
   });
 });
 
-// Start server
+// ================= START SERVER =================
 httpServer.listen(port, () => {
   console.log(`🚀 Server running at http://localhost:${port}`);
 });

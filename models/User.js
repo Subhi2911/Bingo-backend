@@ -1,63 +1,86 @@
 const mongoose = require('mongoose');
 const UserSchema = mongoose.Schema({
-    avatar:{
-        type:String,
-        default:''
+    avatar: {
+        type: String,
+        default: ''
     },
-    username:{
-        type:String,
-        required:true,
-        unique:true,
-        minlength:3
+    username: {
+        type: String,
+        required: true,
+        unique: true,
+        minlength: 3
     },
-    email:{
-        type:String,
-        required:true,
-        unique:true,
+    email: {
+        type: String,
+        required: true,
+        unique: true,
         match: [/\S+@\S+\.\S+/, 'Invalid email format']
     },
-    password:{
-        type:String,
-        required:true
+    password: {
+        type: String,
+        required: true
     },
     date: {
         type: Date,
         default: Date.now
     },
-    bio:{
-        type:String,
-        default:'Hey there!! I enjoy writing blogs.What about you?'
+    bio: {
+        type: String,
+        default: 'Hey there!! I enjoy writing blogs.What about you?'
     },
-    pendingRequests: [{ 
-        type: mongoose.Schema.Types.ObjectId, 
-        ref: 'User' 
+    pendingRequests: [{
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User'
     }],
-    sentRequests: [{ 
-        type: mongoose.Schema.Types.ObjectId, 
-        ref: 'User' 
+    sentRequests: [{
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User'
     }],
-    friends: [{ 
-        type: mongoose.Schema.Types.ObjectId, 
-        ref: 'User' ,
+    friends: [{
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User',
     }],
-    wins:[{
-        classic:{
-            type:Number ,
+    wins: [{
+        classic: {
+            type: Number,
         },
-        fast:{
-            type:Number,
+        fast: {
+            type: Number,
         },
-        power:{
-            type:Number,
+        power: {
+            type: Number,
         },
-        private:{
-            type:Number,
+        private: {
+            type: Number,
         }
     }],
     otp: String,
     otpExpiry: Date,
-    otpVerified: { type: Boolean, default: false } 
-    
+    otpVerified: { type: Boolean, default: false },
+    money: {
+        type: Number,
+        default: 0
+    },
+    level: {
+        type: Number,
+        default: 1
+    },
+    lastDailyClaim: {
+        type: Date,
+        default: null
+    },
+
+    lastSessionAt: Date,      // last time counted
+    dailySessionCount: Number,
+
+    daysLoggedIn: {
+        type: Number,
+        default: 0
+    },
+    xp: {
+        type: Number,
+        default: 0
+    }
 })
 
 const User = mongoose.model('User', UserSchema);
