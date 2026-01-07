@@ -188,6 +188,20 @@ io.on("connection", (socket) => {
       startTurnTimer(roomCode); // start next timer
     }, TURN_TIME * 1000);
   }
+  // ================= GAME RESULT =================
+  socket.on("declare_win", ({ roomCode, winnerId }) => {
+    const game = games[roomCode];
+    if (!game || game.finished.includes(winnerId)) return;
+
+    game.finished.push(winnerId);
+
+    io.to(roomCode).emit("game_result", {
+      winnerId,
+    });
+
+    console.log("🏆 Winner declared:", winnerId);
+  });
+
 
 
   // ================= MATCHMAKING =================
