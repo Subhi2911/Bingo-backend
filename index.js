@@ -56,6 +56,7 @@ io.on("connection", (socket) => {
           $addToSet: {
             players: {
               userId,
+              socketId: socket.id,
               username,
               avatar,
             },
@@ -75,22 +76,36 @@ io.on("connection", (socket) => {
         };
       }
 
-      // Prevent duplicate users
-      const existing = games[roomCode].players.find(
-        (p) => p.userId === userId
-      );
+      const game = games[roomCode];
 
+      // Prevent duplicate users
+      const existing = game.players.find((p) => p.userId === userId);
       if (existing) {
-        existing.socketId = socket.id; // reconnect case
+        existing.socketId = socket.id; // reconnect
+        // Also update turn order socketId if user is in turns
+        const turnPlayer = game.turns.find((p) => p.userId === userId);
+        if (turnPlayer) turnPlayer.socketId = socket.id;
       } else {
-        games[roomCode].players.push({
-          userId,
-          socketId: socket.id,
-          username,
-        });
+        game.players.push({ userId, socketId: socket.id, username, avatar });
       }
 
-      io.to(roomCode).emit("update_players", games[roomCode].players);
+      // If turn order already exists, send to this user
+      if (game.turns.length) {
+        socket.emit("turn_order", game.turns);
+        socket.emit("current_turn", game.turns[game.currentTurn]);
+      }
+
+      // If enough players and turns not yet created, initialize turn order
+      if (game.players.length >= 2 && !game.turns.length) {
+        game.turns = [...game.players].sort(() => Math.random() - 0.5);
+        game.currentTurn = 0;
+
+        io.to(roomCode).emit("turn_order", game.turns);
+        io.to(roomCode).emit("current_turn", game.turns[0]);
+      }
+
+      // Emit updated players
+      io.to(roomCode).emit("update_players", game.players);
 
       console.log(`✅ ${username} joined room ${roomCode}`);
     } catch (err) {
@@ -102,7 +117,7 @@ io.on("connection", (socket) => {
   // ================= START GAME =================
   socket.on("start_game", (roomCode) => {
     const game = games[roomCode];
-    if (!game) return;
+    if (!game || game.turns.length) return; // Prevent reshuffle
 
     game.turns = [...game.players].sort(() => Math.random() - 0.5);
     game.currentTurn = 0;
@@ -112,12 +127,18 @@ io.on("connection", (socket) => {
   });
 
   // ================= NUMBER PICK =================
+  const TURN_TIME = 15; // seconds per turn
+  const turnTimers = {}; // roomCode -> timeoutId
+
+  // ================= NUMBER PICK =================
   socket.on("select_number", async ({ roomCode, number }) => {
     const game = games[roomCode];
     if (!game) return;
 
     const current = game.turns[game.currentTurn];
     if (!current || current.socketId !== socket.id) return;
+
+    clearTimeout(turnTimers[roomCode]); // stop existing timer
 
     if (!game.picked.includes(number)) {
       game.picked.push(number);
@@ -130,83 +151,92 @@ io.on("connection", (socket) => {
 
     io.to(roomCode).emit("number_picked", game.picked);
 
+    // move to next turn
     game.currentTurn = (game.currentTurn + 1) % game.turns.length;
     io.to(roomCode).emit("current_turn", game.turns[game.currentTurn]);
+
+    startTurnTimer(roomCode); // start timer for next player
   });
+
+  // ================= START TURN TIMER =================
+  function startTurnTimer(roomCode) {
+    const game = games[roomCode];
+    if (!game || !game.turns.length) return;
+
+    clearTimeout(turnTimers[roomCode]);
+
+    const currentPlayer = game.turns[game.currentTurn];
+    const availableNumbers = Array.from({ length: 25 }, (_, i) => i + 1)
+      .filter(n => !game.picked.includes(n));
+
+    if (!availableNumbers.length) return; // all numbers picked
+
+    turnTimers[roomCode] = setTimeout(() => {
+      // pick random number if player didn't
+      const randomNumber = availableNumbers[Math.floor(Math.random() * availableNumbers.length)];
+      console.log(`Auto-picked ${randomNumber} for ${currentPlayer.username}`);
+
+      game.picked.push(randomNumber);
+      Room.updateOne({ code: roomCode }, { $addToSet: { selected: randomNumber } }).catch(console.error);
+
+      io.to(roomCode).emit("number_picked", game.picked);
+
+      // move to next turn
+      game.currentTurn = (game.currentTurn + 1) % game.turns.length;
+      io.to(roomCode).emit("current_turn", game.turns[game.currentTurn]);
+
+      startTurnTimer(roomCode); // start next timer
+    }, TURN_TIME * 1000);
+  }
+
 
   // ================= MATCHMAKING =================
   socket.on("find_match", async ({ userId, username, avatar = "", size }) => {
-    const alreadyQueued = queue.find(p => p.userId === userId);
+    const alreadyQueued = queue.find((p) => p.userId === userId);
     if (!alreadyQueued) {
       queue.push({ socketId: socket.id, userId, username, avatar, size });
     }
 
     const group = queue
-      .filter(p => p.size === size)
-      .filter(
-        (p, i, arr) =>
-          arr.findIndex(x => x.userId === p.userId) === i
-      );
-
-    console.log(
-      "MATCH GROUP:",
-      group.map(p => p.username)
-    );
+      .filter((p) => p.size === size)
+      .filter((p, i, arr) => arr.findIndex((x) => x.userId === p.userId) === i);
 
     if (group.length >= size) {
       const players = group.slice(0, size);
-
       players.forEach((p) => {
         const i = queue.findIndex((q) => q.socketId === p.socketId);
         if (i !== -1) queue.splice(i, 1);
       });
 
       const roomCode = "ROOM" + Math.floor(Math.random() * 999999);
-
-      games[roomCode] = {
-        players,
-        turns: [],
-        currentTurn: 0,
-        picked: [],
-        finished: [],
-      };
+      games[roomCode] = { players, turns: [], currentTurn: 0, picked: [], finished: [] };
 
       await Room.create({
         code: roomCode,
-        players: players.map((p) => ({
-          userId: p.userId,
-          username: p.username,
-          avatar: p.avatar,  // now avatar is included
-        })),
+        players: players.map((p) => ({ userId: p.userId, username: p.username, avatar: p.avatar })),
         status: "waiting",
         turn: 0,
         selected: [],
       });
 
+      players.forEach((p) => io.sockets.sockets.get(p.socketId)?.join(roomCode));
 
-      players.forEach((p) =>
-        io.sockets.sockets.get(p.socketId)?.join(roomCode)
-      );
-      console.log(players);
+      // Notify each player
       players.forEach((p) => {
         io.to(p.socketId).emit("match_found", {
           roomCode,
-          players: players.map(x => ({
-            userId: x.userId,
-            username: x.username,
-            avatar: x.avatar
-          }))
+          players: players.map((x) => ({ userId: x.userId, username: x.username, avatar: x.avatar })),
         });
       });
 
-      setTimeout(() => {
-        const game = games[roomCode];
-        game.turns = [...players].sort(() => Math.random() - 0.5);
+      // Initialize turn order if not yet created
+      const game = games[roomCode];
+      if (!game.turns.length) {
+        game.turns = [...game.players].sort(() => Math.random() - 0.5);
         game.currentTurn = 0;
-
         io.to(roomCode).emit("turn_order", game.turns);
         io.to(roomCode).emit("current_turn", game.turns[0]);
-      }, 500);
+      }
     }
   });
 
@@ -219,10 +249,7 @@ io.on("connection", (socket) => {
 
     if (!userId) return;
 
-    await Room.updateOne(
-      { "players.userId": userId },
-      { $pull: { players: { userId } } }
-    ).catch(console.error);
+    await Room.updateOne({ "players.userId": userId }, { $pull: { players: { userId } } }).catch(console.error);
 
     Object.keys(games).forEach((roomCode) => {
       const game = games[roomCode];
