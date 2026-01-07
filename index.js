@@ -45,8 +45,11 @@ io.on("connection", (socket) => {
   // ================= JOIN ROOM =================
   socket.on("join_room", async ({ roomCode, userId, username, avatar = "" }) => {
     try {
+
       socket.join(roomCode);
+      socket.userId = userId;
       socketUserMap[socket.id] = userId;
+
 
       // MongoDB (no duplicates)
       await Room.findOneAndUpdate(
@@ -73,6 +76,7 @@ io.on("connection", (socket) => {
           currentTurn: 0,
           picked: [],
           finished: [],
+          status: "playing"
         };
       }
 
@@ -116,6 +120,9 @@ io.on("connection", (socket) => {
 
   // ================= START GAME =================
   socket.on("start_game", (roomCode) => {
+    const room = games[roomCode];
+    if (!room || room.status === "ended") return;
+
     const game = games[roomCode];
     if (!game || game.turns.length) return; // Prevent reshuffle
 
@@ -132,6 +139,9 @@ io.on("connection", (socket) => {
 
   // ================= NUMBER PICK =================
   socket.on("select_number", async ({ roomCode, number }) => {
+    const room = games[roomCode];
+    if (!room || room.status === "ended") return;
+
     const game = games[roomCode];
     if (!game) return;
 
@@ -155,13 +165,15 @@ io.on("connection", (socket) => {
     game.currentTurn = (game.currentTurn + 1) % game.turns.length;
     io.to(roomCode).emit("current_turn", game.turns[game.currentTurn]);
 
+    if (game.status === "ended") return;
     startTurnTimer(roomCode); // start timer for next player
   });
 
   // ================= START TURN TIMER =================
   function startTurnTimer(roomCode) {
+
     const game = games[roomCode];
-    if (!game || !game.turns.length) return;
+    if (!game || game.status === "ended" || !game.turns.length) return;
 
     clearTimeout(turnTimers[roomCode]);
 
@@ -189,23 +201,86 @@ io.on("connection", (socket) => {
     }, TURN_TIME * 1000);
   }
   // ================= GAME RESULT =================
-  socket.on("declare_win", ({ roomCode, winnerId }) => {
+
+  // socket.on("declare_win", ({ roomCode, winnerId }) => {
+  //   const game = games[roomCode];
+  //   if (!game || game.finished.includes(winnerId)) return;
+
+  //   game.finished.push(winnerId);
+
+  //   io.to(roomCode).emit("game_result", {
+  //     winnerId,
+  //   });
+
+  //   console.log("🏆 Winner declared:", winnerId);
+  // });
+
+  // socket.on("game_end", ({ roomCode }) => {
+  //   const room = games[roomCode];
+  //   if (!room || room.status === "ended") return;
+
+  //   if (!socket.userId) {
+  //     console.error("❌ socket.userId missing");
+  //     return;
+  //   }
+
+  //   // prevent duplicates
+  //   if (room.finished.includes(socket.userId)) return;
+
+  //   room.finished.push(socket.userId);
+
+  //   // when all losers have reported
+  //   if (room.finished.length === room.players.length - 1) {
+
+  //     const winner = room.players.find(
+  //       p => !room.finished.includes(p.userId)
+  //     );
+
+  //     room.status = "ended";
+
+  //     // 🔒 STOP ALL TIMERS
+  //     clearTimeout(turnTimers[roomCode]);
+  //     delete turnTimers[roomCode];
+
+  //     io.to(roomCode).emit("show_results", {
+  //       winnerId: winner.userId,
+  //       losers: room.finished,
+  //     });
+  //   }
+  // });
+
+  socket.on("game_end", async ({ roomCode, winnerId }) => {
     const game = games[roomCode];
-    if (!game || game.finished.includes(winnerId)) return;
+    if (!game || game.status === "ended") return;
 
-    game.finished.push(winnerId);
+    game.status = "ended";
 
-    io.to(roomCode).emit("game_result", {
+    // Stop timers
+    clearTimeout(turnTimers[roomCode]);
+    delete turnTimers[roomCode];
+
+    // Broadcast results
+    const losers = game.players.filter(p => p.userId !== winnerId);
+    io.to(roomCode).emit("show_results", {
       winnerId,
+      losers: losers.map(l => l.userId)
     });
 
-    console.log("🏆 Winner declared:", winnerId);
-  });
+    // ==== CLEANUP ====
+    // Remove room from in-memory games
+    delete games[roomCode];
 
+    // Remove players from queue if they are trying to rejoin
+    queue = queue.filter(p => !game.players.some(gp => gp.userId === p.userId));
+
+    // Optional: mark MongoDB room as ended
+    await Room.updateOne({ code: roomCode }, { status: "ended" }).catch(console.error);
+  });
 
 
   // ================= MATCHMAKING =================
   socket.on("find_match", async ({ userId, username, avatar = "", size }) => {
+
     const alreadyQueued = queue.find((p) => p.userId === userId);
     if (!alreadyQueued) {
       queue.push({ socketId: socket.id, userId, username, avatar, size });
