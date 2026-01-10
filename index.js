@@ -110,7 +110,7 @@ io.on("connection", (socket) => {
 
       // Emit updated players
       io.to(roomCode).emit("update_players", game.players);
-
+      console.log(game.players);
       console.log(`✅ ${username} joined room ${roomCode}`);
     } catch (err) {
       console.error(err);
@@ -268,15 +268,63 @@ io.on("connection", (socket) => {
 
     // ==== CLEANUP ====
     // Remove room from in-memory games
-    delete games[roomCode];
+    //delete games[roomCode];
 
     // Remove players from queue if they are trying to rejoin
-    queue = queue.filter(p => !game.players.some(gp => gp.userId === p.userId));
+    //queue = queue.filter(p => !game.players.some(gp => gp.userId === p.userId));
 
     // Optional: mark MongoDB room as ended
     await Room.updateOne({ code: roomCode }, { status: "ended" }).catch(console.error);
   });
 
+  const readyPlayers = {};
+  function restartGame(roomCode) {
+    const game = games[roomCode];
+    if (!game) return;
+
+    game.status = "playing";
+    game.picked = [];
+    game.finished = [];
+
+    game.turns = [...game.players].sort(() => Math.random() - 0.5);
+    game.currentTurn = 0;
+
+    io.to(roomCode).emit("restart_game", {
+      turns: game.turns,
+      currentTurn: game.turns[0],
+    });
+
+    startTurnTimer(roomCode);
+  }
+
+
+  socket.on("player_ready", ({ roomCode, userId }) => {
+    const game = games[roomCode];
+    if (!game || game.status !== "ended") return;
+
+    // Make sure the room exists in readyPlayers
+    if (!readyPlayers[roomCode]) {
+      readyPlayers[roomCode] = {};
+    }
+
+    // ✅ Mark this user as ready without overwriting others
+    readyPlayers[roomCode][userId] = true;
+
+    // Broadcast ready update
+    io.to(roomCode).emit("ready_update", {
+      readyPlayers: { ...readyPlayers[roomCode] }, // send a copy
+    });
+
+    // Check if all players are ready
+    const allReady = game.players.every(
+      (p) => readyPlayers[roomCode][p.userId]
+    );
+
+    if (allReady) {
+      readyPlayers[roomCode] = {}; // clear after game restart
+      restartGame(roomCode);
+    }
+  });
 
   // ================= MATCHMAKING =================
   socket.on("find_match", async ({ userId, username, avatar = "", size }) => {
@@ -351,6 +399,11 @@ io.on("connection", (socket) => {
         delete games[roomCode];
       } else {
         io.to(roomCode).emit("update_players", game.players);
+      }
+    });
+    Object.keys(readyPlayers).forEach(room => {
+      if (readyPlayers[room][socketUserMap[socket.id]]) {
+        delete readyPlayers[room][socketUserMap[socket.id]];
       }
     });
   });
