@@ -52,21 +52,21 @@ io.on("connection", (socket) => {
 
 
       // MongoDB (no duplicates)
-      await Room.findOneAndUpdate(
-        { code: roomCode },
-        {
-          $setOnInsert: { status: "waiting", turn: 0, selected: [] },
-          $addToSet: {
-            players: {
-              userId,
-              socketId: socket.id,
-              username,
-              avatar,
-            },
-          },
-        },
-        { upsert: true, new: true }
-      );
+      // await Room.findOneAndUpdate(
+      //   { code: roomCode },
+      //   {
+      //     $setOnInsert: { status: "waiting", turn: 0, selected: [] },
+      //     $addToSet: {
+      //       players: {
+      //         userId,
+      //         socketId: socket.id,
+      //         username,
+      //         avatar,
+      //       },
+      //     },
+      //   },
+      //   { upsert: true, new: true }
+      // );
 
       // In-memory game
       if (!games[roomCode]) {
@@ -266,16 +266,38 @@ io.on("connection", (socket) => {
       losers: losers.map(l => l.userId)
     });
 
-    // ==== CLEANUP ====
-    // Remove room from in-memory games
-    //delete games[roomCode];
+    // ===== Save full winner info in Room =====
+    const winner = game.players.find(p => p.userId === winnerId);
+    if (!winner) {
+      console.error(`Winner not found for room ${roomCode}. Cannot save to DB.`);
+      return;
+    }
 
-    // Remove players from queue if they are trying to rejoin
-    //queue = queue.filter(p => !game.players.some(gp => gp.userId === p.userId));
-
-    // Optional: mark MongoDB room as ended
-    await Room.updateOne({ code: roomCode }, { status: "ended" }).catch(console.error);
+    try {
+      const winner = game.players.find(p => p.userId === winnerId);
+      if (winner) {
+        await Room.updateOne(
+          { code: roomCode },
+          {
+            $set: {
+              status: "ended",
+              winner: {
+                userId: winner.userId,
+                username: winner.username,
+                avatar: winner.avatar
+              }
+            }
+          }
+        );
+        console.log(`Winner saved for room ${roomCode}:`, winner);
+      } else {
+        console.warn(`Winner not found in game.players for room ${roomCode}`);
+      }
+    } catch (err) {
+      console.error("Failed to save winner:", err);
+    }
   });
+
 
   const readyPlayers = {};
   function restartGame(roomCode) {
@@ -327,7 +349,7 @@ io.on("connection", (socket) => {
   });
 
   // ================= MATCHMAKING =================
-  socket.on("find_match", async ({ userId, username, avatar = "", size }) => {
+  socket.on("find_match", async ({ userId, username, avatar = "", size, gameType }) => {
 
     const alreadyQueued = queue.find((p) => p.userId === userId);
     if (!alreadyQueued) {
@@ -354,6 +376,7 @@ io.on("connection", (socket) => {
         status: "waiting",
         turn: 0,
         selected: [],
+        gameType: gameType
       });
 
       players.forEach((p) => io.sockets.sockets.get(p.socketId)?.join(roomCode));
@@ -383,29 +406,39 @@ io.on("connection", (socket) => {
 
     const userId = socketUserMap[socket.id];
     delete socketUserMap[socket.id];
-
     if (!userId) return;
 
-    await Room.updateOne({ "players.userId": userId }, { $pull: { players: { userId } } }).catch(console.error);
-
-    Object.keys(games).forEach((roomCode) => {
+    for (const roomCode of Object.keys(games)) {
       const game = games[roomCode];
-      if (!game) return;
+      if (!game) continue;
 
-      game.players = game.players.filter((p) => p.userId !== userId);
-      game.turns = game.turns.filter((p) => p.userId !== userId);
+      const player = game.players.find(p => p.userId === userId);
+      if (!player) continue;
 
-      if (game.players.length === 0) {
-        delete games[roomCode];
-      } else {
+      if (game.status === "playing") {
+        // Game is ongoing, mark as disconnected
+        player.disconnected = true;
         io.to(roomCode).emit("update_players", game.players);
+      } else if (game.status === "waiting") {
+        // Game not started yet, safe to remove
+        game.players = game.players.filter(p => p.userId !== userId);
+        game.turns = game.turns.filter(p => p.userId !== userId);
+
+        await Room.updateOne(
+          { code: roomCode },
+          { $pull: { players: { userId } } }
+        ).catch(console.error);
+
+        io.to(roomCode).emit("update_players", game.players);
+
+        if (game.players.length === 0) delete games[roomCode];
+      } else if (game.status === "ended") {
+        // Game ended, keep players in memory so winner/losers info remains
+        player.disconnected = true;
+        io.to(roomCode).emit("update_players", game.players);
+        // Optional: can still mark them as disconnected in DB if needed
       }
-    });
-    Object.keys(readyPlayers).forEach(room => {
-      if (readyPlayers[room][socketUserMap[socket.id]]) {
-        delete readyPlayers[room][socketUserMap[socket.id]];
-      }
-    });
+    }
   });
 });
 
