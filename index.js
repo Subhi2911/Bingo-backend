@@ -353,23 +353,24 @@ io.on("connection", (socket) => {
 
     const alreadyQueued = queue.find((p) => p.userId === userId);
     if (!alreadyQueued) {
-      queue.push({ socketId: socket.id, userId, username, avatar, size });
+      queue.push({ socketId: socket.id, userId, username, avatar, size, gameType });
     }
 
     const group = queue
       .filter((p) => p.size === size)
+      .filter((p)=>p.gameType === gameType)
       .filter((p, i, arr) => arr.findIndex((x) => x.userId === p.userId) === i);
 
     if (group.length >= size) {
       const players = group.slice(0, size);
-      players.forEach((p) => {
+      players.forEach((p) => { 
         const i = queue.findIndex((q) => q.socketId === p.socketId);
         if (i !== -1) queue.splice(i, 1);
       });
 
       const roomCode = "ROOM" + Math.floor(Math.random() * 999999);
       games[roomCode] = { players, turns: [], currentTurn: 0, picked: [], finished: [] };
-
+      console.log(players);
       await Room.create({
         code: roomCode,
         players: players.map((p) => ({ userId: p.userId, username: p.username, avatar: p.avatar })),

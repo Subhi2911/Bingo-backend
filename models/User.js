@@ -80,7 +80,17 @@ const UserSchema = mongoose.Schema({
     xp: {
         type: Number,
         default: 0
-    }
+    },
+    rank: {
+        type: Number,
+        default: 0
+    },
+    playerId: {
+        type: String,
+        unique: true,
+        index: true,
+    },
+
 })
 
 const User = mongoose.model('User', UserSchema);
