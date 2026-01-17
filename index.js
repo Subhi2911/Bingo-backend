@@ -37,10 +37,17 @@ app.use(express.json());
 app.use("/api/auth", require("./routes/auth"));
 app.use("/api/emailverification", require("./routes/emailverification"));
 app.use("/api/games", require("./routes/gameRoutes"));
+app.use("/api/chat", require("./routes/chat"));
+app.use("/api/messages", require("./routes/messages"));
 
 // ================= SOCKET.IO =================
+const onlineUsers = {};
 io.on("connection", (socket) => {
   console.log("🟢 User connected:", socket.id);
+  socket.on("userOnline", (userId) => {
+    onlineUsers[userId] = socket.id;
+    io.emit("updateOnlineUsers", Object.keys(onlineUsers)); // broadcast
+  });
 
   // ================= JOIN ROOM =================
   socket.on("join_room", async ({ roomCode, userId, username, avatar = "" }) => {
@@ -131,6 +138,14 @@ io.on("connection", (socket) => {
 
     io.to(roomCode).emit("turn_order", game.turns);
     io.to(roomCode).emit("current_turn", game.turns[0]);
+  });
+
+  socket.on("online_status", ({ userId, isOnline }) => {
+    const onlinePlayers = Object.values(socketUserMap).filter(
+      (id) => id === userId
+    );
+    const status = onlinePlayers.length > 0;
+    io.emit("user_online_status", { userId, isOnline: status });
   });
 
   // ================= NUMBER PICK =================
@@ -358,12 +373,12 @@ io.on("connection", (socket) => {
 
     const group = queue
       .filter((p) => p.size === size)
-      .filter((p)=>p.gameType === gameType)
+      .filter((p) => p.gameType === gameType)
       .filter((p, i, arr) => arr.findIndex((x) => x.userId === p.userId) === i);
 
     if (group.length >= size) {
       const players = group.slice(0, size);
-      players.forEach((p) => { 
+      players.forEach((p) => {
         const i = queue.findIndex((q) => q.socketId === p.socketId);
         if (i !== -1) queue.splice(i, 1);
       });
@@ -401,9 +416,26 @@ io.on("connection", (socket) => {
     }
   });
 
+  //Chat sockets
+  socket.on("joinChat", (chatId) => {
+    socket.join(chatId);
+  });
+
+  socket.on("sendMessage", (message) => {
+    // send message to all users in that chat
+    io.to(message.chatId).emit("receiveMessage", message);
+  });
+
   // ================= DISCONNECT =================
   socket.on("disconnect", async () => {
     console.log("❌ User disconnected:", socket.id);
+    for (let [userId, sId] of Object.entries(onlineUsers)) {
+      if (sId === socket.id) {
+        delete onlineUsers[userId];
+        break;
+      }
+    }
+    io.emit("updateOnlineUsers", Object.keys(onlineUsers));
 
     const userId = socketUserMap[socket.id];
     delete socketUserMap[socket.id];
