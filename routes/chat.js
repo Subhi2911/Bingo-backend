@@ -1,11 +1,26 @@
 const router = require("express").Router();
 const Chat = require("../models/Chat");
+const { encrypt, decrypt } = require("../utils/encryption");
 
 //get user chats
 router.get("/user/:userId", async (req, res) => {
     try {
         const userId = req.params.userId;
-        const chats = await Chat.find({ participants: userId }).populate('participants', 'username avatar bio').exec();
+        let chats = await Chat.find({ participants: userId })
+            .populate('participants', 'username avatar bio')
+            .populate({
+                path: "lastMessage",
+                populate: {
+                    path: "sender",
+                    select: "username"
+                }
+            }).lean();
+        chats = chats.map(chat => {
+            if (chat.lastMessage?.text) {
+                chat.lastMessage.text = decrypt(chat.lastMessage.text);
+            }
+            return chat;
+        });
         res.status(200).json(chats);
     } catch (err) {
         res.status(500).json(err);

@@ -30,8 +30,19 @@ exports.encrypt = (text) => {
 
 // Decrypt
 exports.decrypt = (encryptedText) => {
+  if (!encryptedText || !encryptedText.includes(":")) {
+    throw new Error("Invalid encrypted text format");
+  }
+
   const [ivHex, encrypted] = encryptedText.split(":");
+  if (!ivHex || !encrypted) {
+    throw new Error("Missing IV or encrypted data");
+  }
+
   const iv = Buffer.from(ivHex, "hex");
+  if (iv.length !== 16) {
+    throw new Error("Invalid IV length");
+  }
 
   const decipher = crypto.createDecipheriv(algorithm, secretKey, iv);
   let decrypted = decipher.update(encrypted, "hex", "utf8");
@@ -39,3 +50,4 @@ exports.decrypt = (encryptedText) => {
 
   return decrypted;
 };
+

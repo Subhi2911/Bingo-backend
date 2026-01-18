@@ -4,6 +4,7 @@ const Chat = require("../models/Chat");
 const { encrypt, decrypt } = require("../utils/encryption");
 
 
+
 // get messages of a chat
 router.get("/:chatId", async (req, res) => {
     try {

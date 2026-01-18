@@ -4,6 +4,10 @@ const UserSchema = mongoose.Schema({
         type: String,
         default: ''
     },
+    avatarLocked: {
+        type: Boolean,
+        default: false,
+    },
     username: {
         type: String,
         required: true,

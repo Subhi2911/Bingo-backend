@@ -376,9 +376,35 @@ router.get("/search-user", fetchuser, async (req, res) => {
 		res.status(500).json({ error: "Server error" });
 	}
 });
+// routes/avatar.js
+router.post("/select", fetchuser, async (req, res) => {
+	try {
+		const { avatar } = req.body;
 
+		if (!avatar) {
+			return res.status(400).json({ error: "Avatar is required" });
+		}
 
+		const user = await User.findById(req.user.id);
 
+		// ❌ already selected
+		if (user.avatarLocked) {
+			return res.status(403).json({ error: "Avatar already selected" });
+		}
+
+		user.avatar = avatar;
+		user.avatarLocked = true;   // lock forever
+		await user.save();
+
+		res.json({
+			success: true,
+			avatar: user.avatar,
+		});
+	} catch (err) {
+		console.error(err);
+		res.status(500).json({ error: "Server error" });
+	}
+});
 
 
 // Export the router (accepts io if needed for future use)

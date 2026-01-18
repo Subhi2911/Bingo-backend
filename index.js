@@ -10,6 +10,16 @@ const connectToMongo = require("./db");
 const { createServer } = require("http");
 const { Server } = require("socket.io");
 const Room = require("./models/Room");
+const { decrypt } = require("./utils/encryption");
+const safeDecrypt = (text) => {
+    try {
+        if (!text || !text.includes(":")) return text; // return as-is
+        return decrypt(text);
+    } catch (err) {
+        console.error("Decrypt failed:", err.message, "for text:", text);
+        return text; // fallback to original
+    }
+};
 
 // Initialize Express
 const app = express();
@@ -50,7 +60,7 @@ io.on("connection", (socket) => {
   });
 
   // ================= JOIN ROOM =================
-  socket.on("join_room", async ({ roomCode, userId, username, avatar = "" }) => {
+  socket.on("join_room", async ({ roomCode, userId, username, avatar = "", gameType }) => {
     try {
 
       socket.join(roomCode);
@@ -83,7 +93,8 @@ io.on("connection", (socket) => {
           currentTurn: 0,
           picked: [],
           finished: [],
-          status: "playing"
+          status: "playing",
+          gameType: ''
         };
       }
 
@@ -97,7 +108,7 @@ io.on("connection", (socket) => {
         const turnPlayer = game.turns.find((p) => p.userId === userId);
         if (turnPlayer) turnPlayer.socketId = socket.id;
       } else {
-        game.players.push({ userId, socketId: socket.id, username, avatar });
+        game.players.push({ userId, socketId: socket.id, username, avatar, gameType });
       }
 
       // If turn order already exists, send to this user
@@ -215,55 +226,7 @@ io.on("connection", (socket) => {
       startTurnTimer(roomCode); // start next timer
     }, TURN_TIME * 1000);
   }
-  // ================= GAME RESULT =================
-
-  // socket.on("declare_win", ({ roomCode, winnerId }) => {
-  //   const game = games[roomCode];
-  //   if (!game || game.finished.includes(winnerId)) return;
-
-  //   game.finished.push(winnerId);
-
-  //   io.to(roomCode).emit("game_result", {
-  //     winnerId,
-  //   });
-
-  //   console.log("🏆 Winner declared:", winnerId);
-  // });
-
-  // socket.on("game_end", ({ roomCode }) => {
-  //   const room = games[roomCode];
-  //   if (!room || room.status === "ended") return;
-
-  //   if (!socket.userId) {
-  //     console.error("❌ socket.userId missing");
-  //     return;
-  //   }
-
-  //   // prevent duplicates
-  //   if (room.finished.includes(socket.userId)) return;
-
-  //   room.finished.push(socket.userId);
-
-  //   // when all losers have reported
-  //   if (room.finished.length === room.players.length - 1) {
-
-  //     const winner = room.players.find(
-  //       p => !room.finished.includes(p.userId)
-  //     );
-
-  //     room.status = "ended";
-
-  //     // 🔒 STOP ALL TIMERS
-  //     clearTimeout(turnTimers[roomCode]);
-  //     delete turnTimers[roomCode];
-
-  //     io.to(roomCode).emit("show_results", {
-  //       winnerId: winner.userId,
-  //       losers: room.finished,
-  //     });
-  //   }
-  // });
-
+  
   socket.on("game_end", async ({ roomCode, winnerId }) => {
     const game = games[roomCode];
     if (!game || game.status === "ended") return;
@@ -422,8 +385,13 @@ io.on("connection", (socket) => {
   });
 
   socket.on("sendMessage", (message) => {
-    // send message to all users in that chat
-    io.to(message.chatId).emit("receiveMessage", message);
+    console.log('app', message);
+    const decryptedMessage = {
+      ...message,
+      text: safeDecrypt(message.text),
+    };
+
+    socket.to(message.chatId).emit("receiveMessage", decryptedMessage);
   });
 
   // ================= DISCONNECT =================
