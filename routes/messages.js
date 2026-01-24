@@ -28,7 +28,7 @@ router.get("/:chatId", async (req, res) => {
 router.post("/", async (req, res) => {
     try {
         console.log('huhu')
-        const { chatId, sender, text } = req.body;
+        const { chatId, sender, text, type } = req.body;
         console.log(req.body);
         const encryptedText = encrypt(text);
 
@@ -36,6 +36,7 @@ router.post("/", async (req, res) => {
             chatId,
             sender: sender,
             text: encryptedText,
+            type: type || ''
         });
         await Chat.findByIdAndUpdate(chatId, {
             lastMessage: message._id,
@@ -52,7 +53,7 @@ router.post("/", async (req, res) => {
         // decrypt before sending to frontend
         const responseMessage = {
             ...saved.toObject(),
-            text: decrypt(saved.text),
+            text: type === 'private_room_invite' ? saved.text : decrypt(saved.text),
         };
         console.log("Message sent:", responseMessage);
         res.status(201).json(responseMessage);

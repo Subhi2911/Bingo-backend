@@ -24,5 +24,8 @@ const MessagesSchema = mongoose.Schema({
         type: mongoose.Schema.Types.ObjectId,
         ref: 'User',
     }],
+    type:{
+        type:String
+    }
 }, { timestamps: true });
 module.exports = mongoose.model('Message', MessagesSchema);

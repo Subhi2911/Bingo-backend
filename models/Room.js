@@ -24,7 +24,8 @@ const roomSchema = new mongoose.Schema(
             },
             username: String,
             avatar: String
-        }
+        },
+        gameStarted: { type: Boolean, default: false },
     },
     { timestamps: true }
 );

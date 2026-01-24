@@ -49,10 +49,11 @@ app.use("/api/emailverification", require("./routes/emailverification"));
 app.use("/api/games", require("./routes/gameRoutes"));
 app.use("/api/chat", require("./routes/chat"));
 app.use("/api/messages", require("./routes/messages"));
+app.use("/api/rooms", require("./routes/rooms"));
 
 // ================= SOCKET.IO =================
 const onlineUsers = {};
-const privateRooms = {};
+//const privateRooms = {};
 const generateRoomCode = () => {
   return Math.random().toString(36).substring(2, 8).toUpperCase();
 };
@@ -384,29 +385,25 @@ io.on("connection", (socket) => {
     }
   });
 
-  /* ================= PRIVATE ROOM CREATE ================= */
-  socket.on("create_private_room", ({
-    userId,
-    username,
-    avatar = "",
-    gameType,
-    size,
-    password
-  }) => {
-    console.log("create room");
-    const roomCode = generateRoomCode();
+  const privateRooms = {};
+
+  // ===============================
+  // CREATE ROOM
+  // ===============================
+  socket.on("create_private_room", ({ size, userId, username, avatar }) => {
+    const roomCode = Math.random().toString(36).substring(2, 8).toUpperCase();
 
     privateRooms[roomCode] = {
       roomCode,
-      gameType,
       size,
-      password: password || null,
+      hostId: userId,
       players: [
         {
           socketId: socket.id,
           userId,
           username,
           avatar,
+          ready: false,
           isAdmin: true,
         },
       ],
@@ -414,76 +411,83 @@ io.on("connection", (socket) => {
 
     socket.join(roomCode);
 
-    console.log(`🔐 Private room created: ${roomCode}`);
-
     socket.emit("private_room_created", {
       roomCode,
       players: privateRooms[roomCode].players,
     });
   });
 
-  
+  // ===============================
+  // INVITE FRIEND
+  // ===============================
+  socket.on("invite_to_private_room", ({ friendId, roomCode, fromUser }) => {
+    const friendSocket = onlineUsers[friendId];
+    if (!friendSocket) return;
 
+    io.to(friendSocket).emit("private_room_invite", {
+      roomCode,
+      fromUser,
+    });
+  });
 
-  socket.on("join_private_room", ({
-    roomCode,
-    userId,
-    username,
-    avatar = "",
-    password,
-  }) => {
+  // ===============================
+  // JOIN ROOM
+  // ===============================
+  socket.on("join_private_room", ({ roomCode, userId, username, avatar }) => {
     const room = privateRooms[roomCode];
+    if (!room) return;
 
-    // ❌ Room not found
-    if (!room) {
-      return socket.emit("room_error", "Room not found");
-    }
+    if (room.players.find(p => p.userId === userId)) return;
 
-    // 🔐 Password check
-    if (room.password && room.password !== password) {
-      return socket.emit("room_error", "Invalid password");
-    }
+    if (room.players.length >= room.size) return;
 
-    // 🚫 Room full
-    if (room.players.length >= room.size) {
-      return socket.emit("room_error", "Room is full");
-    }
-
-    // Prevent duplicate join
-    const alreadyJoined = room.players.find(p => p.userId === userId);
-    if (alreadyJoined) {
-      alreadyJoined.socketId = socket.id;
-    } else {
-      room.players.push({
-        socketId: socket.id,
-        userId,
-        username,
-        avatar,
-        isAdmin: false,
-      });
-    }
+    room.players.push({
+      socketId: socket.id,
+      userId,
+      username,
+      avatar,
+      ready: false,
+      isAdmin: false,
+    });
 
     socket.join(roomCode);
 
-    console.log(`✅ ${username} joined private room ${roomCode}`);
-
-    // Notify all players in room
     io.to(roomCode).emit("private_room_updated", {
       roomCode,
       players: room.players,
     });
+  });
 
-    // 🎮 Auto start when full
-    if (room.players.length === room.size) {
-      io.to(roomCode).emit("match_found", {
-        roomCode,
-        players: room.players.map(p => ({
-          userId: p.userId,
-          username: p.username,
-          avatar: p.avatar,
-        })),
-      });
-    }
+  // ===============================
+  // READY UP
+  // ===============================
+  socket.on("player_ready", ({ roomCode, userId }) => {
+    const room = privateRooms[roomCode];
+    if (!room) return;
+
+    const player = room.players.find(p => p.userId === userId);
+    if (player) player.ready = !player.ready;
+
+    io.to(roomCode).emit("private_room_updated", {
+      roomCode,
+      players: room.players,
+    });
+  });
+
+  // ===============================
+  // START GAME
+  // ===============================
+  socket.on("start_game", ({ roomCode }) => {
+    const room = privateRooms[roomCode];
+    if (!room) return;
+
+    const allReady =
+      room.players.length === room.size &&
+      room.players.every(p => p.ready);
+
+    if (!allReady) return;
+
+    io.to(roomCode).emit("match_found", { roomCode });
   });
 
   //Chat sockets
