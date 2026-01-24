@@ -50,9 +50,10 @@ router.post('/register', [
 		user = await User.create({
 			username: req.body.username,
 			email: req.body.email,
-			password: secPass
+			password: secPass,
+			playerId: generatePlayerId()
 		});
-		user.playerId = generatePlayerId();
+		//user.playerId = generatePlayerId();
 
 		const data = {
 			user: {

@@ -12,13 +12,13 @@ const { Server } = require("socket.io");
 const Room = require("./models/Room");
 const { decrypt } = require("./utils/encryption");
 const safeDecrypt = (text) => {
-    try {
-        if (!text || !text.includes(":")) return text; // return as-is
-        return decrypt(text);
-    } catch (err) {
-        console.error("Decrypt failed:", err.message, "for text:", text);
-        return text; // fallback to original
-    }
+  try {
+    if (!text || !text.includes(":")) return text; // return as-is
+    return decrypt(text);
+  } catch (err) {
+    console.error("Decrypt failed:", err.message, "for text:", text);
+    return text; // fallback to original
+  }
 };
 
 // Initialize Express
@@ -52,6 +52,11 @@ app.use("/api/messages", require("./routes/messages"));
 
 // ================= SOCKET.IO =================
 const onlineUsers = {};
+const privateRooms = {};
+const generateRoomCode = () => {
+  return Math.random().toString(36).substring(2, 8).toUpperCase();
+};
+
 io.on("connection", (socket) => {
   console.log("🟢 User connected:", socket.id);
   socket.on("userOnline", (userId) => {
@@ -226,7 +231,7 @@ io.on("connection", (socket) => {
       startTurnTimer(roomCode); // start next timer
     }, TURN_TIME * 1000);
   }
-  
+
   socket.on("game_end", async ({ roomCode, winnerId }) => {
     const game = games[roomCode];
     if (!game || game.status === "ended") return;
@@ -346,7 +351,7 @@ io.on("connection", (socket) => {
         if (i !== -1) queue.splice(i, 1);
       });
 
-      const roomCode = "ROOM" + Math.floor(Math.random() * 999999);
+      const roomCode = generateRoomCode();
       games[roomCode] = { players, turns: [], currentTurn: 0, picked: [], finished: [] };
       console.log(players);
       await Room.create({
@@ -376,6 +381,108 @@ io.on("connection", (socket) => {
         io.to(roomCode).emit("turn_order", game.turns);
         io.to(roomCode).emit("current_turn", game.turns[0]);
       }
+    }
+  });
+
+  /* ================= PRIVATE ROOM CREATE ================= */
+  socket.on("create_private_room", ({
+    userId,
+    username,
+    avatar = "",
+    gameType,
+    size,
+    password
+  }) => {
+    console.log("create room");
+    const roomCode = generateRoomCode();
+
+    privateRooms[roomCode] = {
+      roomCode,
+      gameType,
+      size,
+      password: password || null,
+      players: [
+        {
+          socketId: socket.id,
+          userId,
+          username,
+          avatar,
+          isAdmin: true,
+        },
+      ],
+    };
+
+    socket.join(roomCode);
+
+    console.log(`🔐 Private room created: ${roomCode}`);
+
+    socket.emit("private_room_created", {
+      roomCode,
+      players: privateRooms[roomCode].players,
+    });
+  });
+
+  
+
+
+  socket.on("join_private_room", ({
+    roomCode,
+    userId,
+    username,
+    avatar = "",
+    password,
+  }) => {
+    const room = privateRooms[roomCode];
+
+    // ❌ Room not found
+    if (!room) {
+      return socket.emit("room_error", "Room not found");
+    }
+
+    // 🔐 Password check
+    if (room.password && room.password !== password) {
+      return socket.emit("room_error", "Invalid password");
+    }
+
+    // 🚫 Room full
+    if (room.players.length >= room.size) {
+      return socket.emit("room_error", "Room is full");
+    }
+
+    // Prevent duplicate join
+    const alreadyJoined = room.players.find(p => p.userId === userId);
+    if (alreadyJoined) {
+      alreadyJoined.socketId = socket.id;
+    } else {
+      room.players.push({
+        socketId: socket.id,
+        userId,
+        username,
+        avatar,
+        isAdmin: false,
+      });
+    }
+
+    socket.join(roomCode);
+
+    console.log(`✅ ${username} joined private room ${roomCode}`);
+
+    // Notify all players in room
+    io.to(roomCode).emit("private_room_updated", {
+      roomCode,
+      players: room.players,
+    });
+
+    // 🎮 Auto start when full
+    if (room.players.length === room.size) {
+      io.to(roomCode).emit("match_found", {
+        roomCode,
+        players: room.players.map(p => ({
+          userId: p.userId,
+          username: p.username,
+          avatar: p.avatar,
+        })),
+      });
     }
   });
 

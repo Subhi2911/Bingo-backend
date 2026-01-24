@@ -13,6 +13,7 @@ module.exports = (io) => {
             io.to(roomCode).emit("update_selected", number);
         });
 
+
         socket.on("disconnect", () => {
             console.log("User disconnected:", socket.id);
         });
