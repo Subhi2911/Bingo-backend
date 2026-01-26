@@ -19,10 +19,7 @@ module.exports = (io) => {
       socket.join(roomCode);
     });
 
-    socket.on("number_selected", ({ number, roomCode }) => {
-      io.to(roomCode).emit("update_selected", number);
-    });
-
+    
     socket.on("disconnect", () => {
       console.log("User disconnected:", socket.id);
     });

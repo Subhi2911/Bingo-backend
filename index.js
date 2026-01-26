@@ -7,6 +7,7 @@ require("dotenv").config({ path: ".env.local" });
 const express = require("express");
 const cors = require("cors");
 const connectToMongo = require("./db");
+const Notification = require("./models/Notification");
 const { createServer } = require("http");
 const { Server } = require("socket.io");
 const Room = require("./models/Room");
@@ -35,6 +36,7 @@ const io = new Server(httpServer, {
     credentials: true,
   },
 });
+app.set("io", io);
 
 // MongoDB
 connectToMongo();
@@ -50,9 +52,11 @@ app.use("/api/games", require("./routes/gameRoutes"));
 app.use("/api/chat", require("./routes/chat"));
 app.use("/api/messages", require("./routes/messages"));
 app.use("/api/rooms", require("./routes/rooms"));
+app.use("/api/notifications", require("./routes/notification"));
 
 // ================= SOCKET.IO =================
 const onlineUsers = {};
+app.set("onlineUsers", onlineUsers);
 //const privateRooms = {};
 const generateRoomCode = () => {
   return Math.random().toString(36).substring(2, 8).toUpperCase();
@@ -72,24 +76,6 @@ io.on("connection", (socket) => {
       socket.join(roomCode);
       socket.userId = userId;
       socketUserMap[socket.id] = userId;
-
-
-      // MongoDB (no duplicates)
-      // await Room.findOneAndUpdate(
-      //   { code: roomCode },
-      //   {
-      //     $setOnInsert: { status: "waiting", turn: 0, selected: [] },
-      //     $addToSet: {
-      //       players: {
-      //         userId,
-      //         socketId: socket.id,
-      //         username,
-      //         avatar,
-      //       },
-      //     },
-      //   },
-      //   { upsert: true, new: true }
-      // );
 
       // In-memory game
       if (!games[roomCode]) {
@@ -202,8 +188,16 @@ io.on("connection", (socket) => {
   });
 
   // ================= START TURN TIMER =================
-  function startTurnTimer(roomCode) {
+  const GAME_RULES = {
+    classic: {
+      TURN_TIME: 15,
+    },
+    fast: {
+      TURN_TIME: 5,
+    },
+  };
 
+  function startTurnTimer(roomCode) {
     const game = games[roomCode];
     if (!game || game.status === "ended" || !game.turns.length) return;
 
@@ -213,24 +207,30 @@ io.on("connection", (socket) => {
     const availableNumbers = Array.from({ length: 25 }, (_, i) => i + 1)
       .filter(n => !game.picked.includes(n));
 
-    if (!availableNumbers.length) return; // all numbers picked
+    if (!availableNumbers.length) return;
+
+
+    const turnTime =
+      GAME_RULES[game.gameType]?.TURN_TIME || 15; // 👈 classic fallback
 
     turnTimers[roomCode] = setTimeout(() => {
-      // pick random number if player didn't
-      const randomNumber = availableNumbers[Math.floor(Math.random() * availableNumbers.length)];
-      console.log(`Auto-picked ${randomNumber} for ${currentPlayer.username}`);
+      const randomNumber =
+        availableNumbers[Math.floor(Math.random() * availableNumbers.length)];
 
       game.picked.push(randomNumber);
-      Room.updateOne({ code: roomCode }, { $addToSet: { selected: randomNumber } }).catch(console.error);
+
+      Room.updateOne(
+        { code: roomCode },
+        { $addToSet: { selected: randomNumber } }
+      ).catch(console.error);
 
       io.to(roomCode).emit("number_picked", game.picked);
 
-      // move to next turn
       game.currentTurn = (game.currentTurn + 1) % game.turns.length;
       io.to(roomCode).emit("current_turn", game.turns[game.currentTurn]);
 
-      startTurnTimer(roomCode); // start next timer
-    }, TURN_TIME * 1000);
+      startTurnTimer(roomCode);
+    }, turnTime * 1000);
   }
 
   socket.on("game_end", async ({ roomCode, winnerId }) => {
@@ -390,79 +390,186 @@ io.on("connection", (socket) => {
   // ===============================
   // CREATE ROOM
   // ===============================
-  socket.on("create_private_room", ({ size, userId, username, avatar }) => {
-    const roomCode = Math.random().toString(36).substring(2, 8).toUpperCase();
+  socket.on("create_private_room", async ({
+    size,
+    userId,
+    username,
+    avatar,
+    gameType,
+    password,
+  }) => {
+    try {
+      const roomCode = generateRoomCode();
 
-    privateRooms[roomCode] = {
-      roomCode,
-      size,
-      hostId: userId,
-      players: [
+      const players = [
         {
           socketId: socket.id,
           userId,
           username,
           avatar,
-          ready: false,
+          ready: true,
           isAdmin: true,
+
         },
-      ],
-    };
+      ];
 
-    socket.join(roomCode);
+      // In-memory
+      privateRooms[roomCode] = {
+        roomCode,
+        size,
+        hostId: userId,
+        gameType,
+        password: password || null,
+        players,
+      };
 
-    socket.emit("private_room_created", {
-      roomCode,
-      players: privateRooms[roomCode].players,
-    });
+      // ✅ SAVE TO MONGODB (THIS WAS MISSING / BROKEN)
+      await Room.create({
+        code: roomCode,
+        players: players.map(p => ({
+          userId: p.userId,
+          username: p.username,
+          avatar: p.avatar,
+          socketId: p.socketId,
+        })),
+        size,
+        status: "waiting",
+        turn: 0,
+        selected: [],
+        gameType,
+        isPrivate: true,
+        password:password,
+      });
+
+      socket.join(roomCode);
+
+      socket.emit("private_room_created", {
+        roomCode,
+        players,
+      });
+
+      console.log("✅ Private room created:", roomCode);
+    } catch (err) {
+      console.error("❌ Private room creation failed:", err);
+      socket.emit("error", "Failed to create private room");
+    }
   });
 
   // ===============================
   // INVITE FRIEND
   // ===============================
-  socket.on("invite_to_private_room", ({ friendId, roomCode, fromUser }) => {
-    const friendSocket = onlineUsers[friendId];
-    if (!friendSocket) return;
+  socket.on("invite_to_private_room", ({ receiverId, payload }) => {
+    /*
+      payload example:
+      {
+        roomCode,
+        gameType,
+        playerCount,
+        chatId
+      }
+    */
 
-    io.to(friendSocket).emit("private_room_invite", {
-      roomCode,
-      fromUser,
-    });
+    const receiverSocketId = onlineUsers[receiverId];
+
+    if (receiverSocketId) {
+      io.to(receiverSocketId).emit("private_room_invite", {
+        fromUser: socket.userId, // set during socket auth
+        ...payload,
+      });
+    }
   });
 
   // ===============================
   // JOIN ROOM
   // ===============================
-  socket.on("join_private_room", ({ roomCode, userId, username, avatar }) => {
-    const room = privateRooms[roomCode];
-    if (!room) return;
+  socket.on("join_private_room", async ({ roomCode, userId, username, avatar }) => {
+    try {
+      if (!roomCode || !userId) {
+        socket.emit("room_not_found");
+        return;
+      }
 
-    if (room.players.find(p => p.userId === userId)) return;
+      // 1️⃣ Always check DB first (source of truth)
+      const dbRoom = await Room.findOne({ code: roomCode });
+      if (!dbRoom) {
+        socket.emit("room_not_found");
+        return;
+      }
 
-    if (room.players.length >= room.size) return;
+      // 2️⃣ Restore in-memory room if lost (server restart, crash, etc.)
+      if (!privateRooms[roomCode]) {
+        privateRooms[roomCode] = {
+          roomCode,
+          size: dbRoom.size,
+          players: dbRoom.players.map(p => ({
+            userId: p.userId,
+            username: p.username,
+            avatar: p.avatar,
+            ready: false,
+            isAdmin: false,
+            socketId: p.socketId,
+          })),
+        };
+      }
 
-    room.players.push({
-      socketId: socket.id,
-      userId,
-      username,
-      avatar,
-      ready: false,
-      isAdmin: false,
-    });
+      const room = privateRooms[roomCode];
 
-    socket.join(roomCode);
+      // 3️⃣ Prevent duplicate joins
+      const alreadyJoined = room.players.find(p => p.userId === userId);
+      if (alreadyJoined) {
+        alreadyJoined.socketId = socket.id;
+        socket.join(roomCode);
 
-    io.to(roomCode).emit("private_room_updated", {
-      roomCode,
-      players: room.players,
-    });
+        io.to(roomCode).emit("private_room_updated", {
+          roomCode,
+          players: room.players,
+        });
+        return;
+      }
+
+      // 4️⃣ Add new player
+      const player = {
+        socketId: socket.id,
+        userId,
+        username,
+        avatar,
+        ready: false,
+        isAdmin: false,
+      };
+
+      room.players.push(player);
+
+      // 5️⃣ Save to DB (safe add)
+      await Room.updateOne(
+        { code: roomCode },
+        {
+          $addToSet: {
+            players: { userId, username, avatar },
+          },
+        }
+      );
+
+      // 6️⃣ Join socket room
+      socket.join(roomCode);
+
+      // 7️⃣ Broadcast update
+      io.to(roomCode).emit("private_room_updated", {
+        roomCode,
+        players: room.players,
+      });
+
+    } catch (err) {
+      console.error("JOIN PRIVATE ROOM ERROR:", err);
+      socket.emit("room_not_found");
+    }
   });
-
   // ===============================
   // READY UP
   // ===============================
-  socket.on("player_ready", ({ roomCode, userId }) => {
+  socket.on("private_player_ready", ({ roomCode, userId }) => {
     const room = privateRooms[roomCode];
+    console.log(privateRooms);
+    console.log(room?.players);
     if (!room) return;
 
     const player = room.players.find(p => p.userId === userId);
@@ -477,8 +584,12 @@ io.on("connection", (socket) => {
   // ===============================
   // START GAME
   // ===============================
-  socket.on("start_game", ({ roomCode }) => {
+  socket.on("start_private_game", ({ roomCode }) => {
+    console.log("jj", roomCode);
+    console.log("GAME PLAYERS:", games[roomCode]?.players);
     const room = privateRooms[roomCode];
+    console.log(privateRooms);
+    console.log(room);
     if (!room) return;
 
     const allReady =
@@ -487,9 +598,42 @@ io.on("connection", (socket) => {
 
     if (!allReady) return;
 
-    io.to(roomCode).emit("match_found", { roomCode });
-  });
+    // Create game instance
+    games[roomCode] = {
+      players: room.players.map(p => ({
+        userId: p.userId,
+        username: p.username,
+        avatar: p.avatar,
+        socketId: p.socketId,
+      })),
+      turns: [],
+      currentTurn: 0,
+      picked: [],
+      finished: [],
+      status: "playing",
+      gameType: room.gameType,
+    };
 
+    const game = games[roomCode];
+
+    // Shuffle turns
+    game.turns = [...game.players].sort(() => Math.random() - 0.5);
+    game.currentTurn = 0;
+
+    // 🔥 Broadcast a **dedicated event** to all clients
+    io.to(roomCode).emit("private_game_started", {
+      roomCode,
+      gameType: game.gameType,
+      players: game.players,
+      turns: game.turns,
+    });
+
+    io.to(roomCode).emit("turn_order", game.turns);
+    io.to(roomCode).emit("current_turn", game.turns[0]);
+    startTurnTimer(roomCode);
+
+    console.log(`🎮 Private game started (${game.gameType}) in room ${roomCode}`);
+  });
   //Chat sockets
   socket.on("joinChat", (chatId) => {
     socket.join(chatId);

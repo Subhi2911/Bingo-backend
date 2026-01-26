@@ -3,6 +3,8 @@ const mongoose = require("mongoose");
 const roomSchema = new mongoose.Schema(
     {
         code: String,
+        size: Number,
+
         players: [
             {
                 userId: {
@@ -26,6 +28,9 @@ const roomSchema = new mongoose.Schema(
             avatar: String
         },
         gameStarted: { type: Boolean, default: false },
+        password: {
+            type: Number
+        }
     },
     { timestamps: true }
 );
