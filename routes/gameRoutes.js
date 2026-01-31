@@ -5,13 +5,14 @@ const fetchuser = require('../middleware/fetchuser');
 const User = require("../models/User");
 const Room = require("../models/Room");
 const mongoose = require("mongoose");
+const { updateProgressWithXP } = require('../utils/levelSystem');
 
 router.post("/daily-claim", fetchuser, claimDailyReward);
 
 
 router.get("/gamehistory", fetchuser, async (req, res) => {
     try {
-        const userId = String(req.user.id); 
+        const userId = String(req.user.id);
 
         const userObjectId = new mongoose.Types.ObjectId(userId);
 
@@ -28,6 +29,24 @@ router.get("/gamehistory", fetchuser, async (req, res) => {
         });
     }
 });
+
+// POST /api/game/update-progress
+router.post('/update-progress', fetchuser, async (req, res) => {
+    const { didWin, bonusXP } = req.body;
+
+    const user = await User.findById(req.user.id);
+
+    const result = updateProgressWithXP(user, didWin, bonusXP);
+
+    user.level = result.level;
+    user.stars = result.stars;
+    user.xp = result.xp;
+
+    await user.save();
+
+    res.json(result);
+});
+
 
 
 

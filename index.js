@@ -1,5 +1,7 @@
+/* eslint-disable no-shadow */
 const games = {};
 let queue = [];
+const privateRooms = {};
 const socketUserMap = {}; // socket.id -> userId
 
 require("dotenv").config({ path: ".env.local" });
@@ -385,7 +387,7 @@ io.on("connection", (socket) => {
     }
   });
 
-  const privateRooms = {};
+
 
   // ===============================
   // CREATE ROOM
@@ -438,7 +440,7 @@ io.on("connection", (socket) => {
         selected: [],
         gameType,
         isPrivate: true,
-        password:password,
+        password: password,
       });
 
       socket.join(roomCode);
@@ -479,101 +481,67 @@ io.on("connection", (socket) => {
     }
   });
 
-  // ===============================
-  // JOIN ROOM
-  // ===============================
-  socket.on("join_private_room", async ({ roomCode, userId, username, avatar }) => {
-    try {
-      if (!roomCode || !userId) {
-        socket.emit("room_not_found");
-        return;
-      }
+  socket.on('join_private_room', ({ roomCode, userId, username, avatar }) => {
+    const room = privateRooms[roomCode];
+    if (!room) return;
 
-      // 1️⃣ Always check DB first (source of truth)
-      const dbRoom = await Room.findOne({ code: roomCode });
-      if (!dbRoom) {
-        socket.emit("room_not_found");
-        return;
-      }
-
-      // 2️⃣ Restore in-memory room if lost (server restart, crash, etc.)
-      if (!privateRooms[roomCode]) {
-        privateRooms[roomCode] = {
-          roomCode,
-          size: dbRoom.size,
-          players: dbRoom.players.map(p => ({
-            userId: p.userId,
-            username: p.username,
-            avatar: p.avatar,
-            ready: false,
-            isAdmin: false,
-            socketId: p.socketId,
-          })),
-        };
-      }
-
-      const room = privateRooms[roomCode];
-
-      // 3️⃣ Prevent duplicate joins
-      const alreadyJoined = room.players.find(p => p.userId === userId);
-      if (alreadyJoined) {
-        alreadyJoined.socketId = socket.id;
-        socket.join(roomCode);
-
-        io.to(roomCode).emit("private_room_updated", {
-          roomCode,
-          players: room.players,
-        });
-        return;
-      }
-
-      // 4️⃣ Add new player
-      const player = {
-        socketId: socket.id,
+    //JOIN SOCKET ROOM FIRST
+    socket.join(roomCode);
+    console.log(roomCode, userId, username, avatar);
+    const player = room.players.find(p => p.userId === userId);
+    console.log(player, room, userId);
+    if (player) {
+      player.socketId = socket.id;
+      player.username = username;
+      player.avatar = avatar;
+    } else {
+      room.players.push({
         userId,
         username,
         avatar,
         ready: false,
         isAdmin: false,
-      };
-
-      room.players.push(player);
-
-      // 5️⃣ Save to DB (safe add)
-      await Room.updateOne(
-        { code: roomCode },
-        {
-          $addToSet: {
-            players: { userId, username, avatar },
-          },
-        }
-      );
-
-      // 6️⃣ Join socket room
-      socket.join(roomCode);
-
-      // 7️⃣ Broadcast update
-      io.to(roomCode).emit("private_room_updated", {
-        roomCode,
-        players: room.players,
+        socketId: socket.id,
       });
-
-    } catch (err) {
-      console.error("JOIN PRIVATE ROOM ERROR:", err);
-      socket.emit("room_not_found");
     }
+
+    console.log('ROOM STATE', room);
+
+    io.to(roomCode).emit('private_room_updated', {
+      roomCode,
+      players: room.players,
+    });
   });
   // ===============================
   // READY UP
   // ===============================
-  socket.on("private_player_ready", ({ roomCode, userId }) => {
+  // socket.on("private_player_ready", ({ roomCode, userId }) => {
+  //   const room = privateRooms[roomCode];
+  //   console.log(privateRooms);
+  //   console.log(room?.players);
+  //   if (!room) return;
+
+  //   const player = room.players.find(p => p.userId === userId);
+  //   if (player) player.ready = !player.ready;
+
+  //   io.to(roomCode).emit("private_room_updated", {
+  //     roomCode,
+  //     players: room.players,
+  //   });
+  // });
+  socket.on("private_player_ready", ({ userId, roomCode }) => {
     const room = privateRooms[roomCode];
-    console.log(privateRooms);
-    console.log(room?.players);
     if (!room) return;
 
-    const player = room.players.find(p => p.userId === userId);
-    if (player) player.ready = !player.ready;
+    const player = room.players.find(
+      p => p.userId.toString() === userId
+    );
+    console.log("bb",player);
+
+    if (!player) return;
+
+    player.ready = !player.ready;
+    console.log(room);
 
     io.to(roomCode).emit("private_room_updated", {
       roomCode,

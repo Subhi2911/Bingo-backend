@@ -69,6 +69,12 @@ const UserSchema = mongoose.Schema({
         type: Number,
         default: 1
     },
+    stars: {
+        type: Number,
+        min: 0,
+        max: 5,
+        default: 0
+    },
     lastDailyClaim: {
         type: Date,
         default: null
