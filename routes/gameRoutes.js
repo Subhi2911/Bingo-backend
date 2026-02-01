@@ -30,14 +30,42 @@ router.get("/gamehistory", fetchuser, async (req, res) => {
     }
 });
 
+const getTimeBonus = (seconds, gameType) => {
+    if (!seconds) return 0;
+
+    if (gameType === 'fast') {
+        if (seconds <= 60) return 30;
+        if (seconds <= 90) return 20;
+        if (seconds <= 120) return 15;
+        else return 10
+    }
+
+    if (gameType === 'classic') {
+        if (seconds <= 120) return 45;
+        if (seconds <= 180) return 30;
+        if (seconds <= 240) return 25;
+        else return 15
+    }
+
+    if (gameType === 'power') {
+        if (seconds <= 180) return 60;
+        if (seconds <= 240) return 45;
+        if (seconds <= 300) return 25;
+        else return 10
+    }
+
+    return 0;
+};
+
+
 // POST /api/game/update-progress
 router.post('/update-progress', fetchuser, async (req, res) => {
-    const { gameId, didWin, bonusXP, gameType, playerCount } = req.body;
-
+    const { gameId, didWin, gameType, playerCount, duration } = req.body;
+    console.log(duration)
     if (!gameId) {
         return res.status(400).json({ error: "gameId required" });
     }
-
+    const bonusXP = didWin ? getTimeBonus(duration, gameType) : 0;
     const user = await User.findById(req.user.id);
 
     // 🔒 BLOCK DUPLICATES
@@ -83,5 +111,41 @@ router.post('/update-progress', fetchuser, async (req, res) => {
     });
 });
 
+// routes/leaderboard.js
+router.get('/leaderboard', fetchuser, async (req, res) => {
+    try {
+        const userId = req.user.id;
+
+        // 🔹 Top 20 users by XP
+        const topUsers = await User.find({})
+            .sort({ xp: -1 })
+            .limit(20)
+            .select('username avatar xp');
+
+        // 🔹 Get current user's XP
+        const currentUser = await User.findById(userId).select('xp username avatar');
+
+        if (!currentUser) {
+            return res.status(404).json({ msg: 'User not found' });
+        }
+
+        // 🔹 Count how many users have MORE XP than this user
+        const higherXpCount = await User.countDocuments({
+            xp: { $gt: currentUser.xp }
+        });
+
+        const userRank = higherXpCount + 1;
+
+        res.json({
+            topUsers,
+            userRank,
+            currentUser
+        });
+
+    } catch (err) {
+        console.error(err);
+        res.status(500).send('Server Error');
+    }
+});
 
 module.exports = router;

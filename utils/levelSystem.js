@@ -23,6 +23,7 @@ const updateProgressWithXP = (
 
     const baseXP = XP_MAP[gameType] || 0;
     const earnedXP = (didWin ? baseXP : -baseXP) + bonusXP;
+    console.log(bonusXP);
 
     // ✅ Total XP only increases
     if (earnedXP > 0) {
