@@ -32,23 +32,56 @@ router.get("/gamehistory", fetchuser, async (req, res) => {
 
 // POST /api/game/update-progress
 router.post('/update-progress', fetchuser, async (req, res) => {
-    const { didWin, bonusXP } = req.body;
+    const { gameId, didWin, bonusXP, gameType, playerCount } = req.body;
+
+    if (!gameId) {
+        return res.status(400).json({ error: "gameId required" });
+    }
 
     const user = await User.findById(req.user.id);
 
-    const result = updateProgressWithXP(user, didWin, bonusXP);
+    // 🔒 BLOCK DUPLICATES
+    if (user.lastProcessedGame === gameId) {
+        return res.json({
+            message: "Game already processed",
+            money: user.money,
+            level: user.level,
+            levelXp: user.levelXp,
+            totalXp: user.totalXp,
+            stars: user.stars
+        });
+    }
+
+    user.lastProcessedGame = gameId;
+
+    const oldLevelXp = user.levelXp;
+    const result = updateProgressWithXP(user, didWin, gameType, bonusXP);
 
     user.level = result.level;
+    user.levelXp = result.levelXp;
+    user.totalXp = result.totalXp;
     user.stars = result.stars;
-    user.xp = result.xp;
+
+    // 💰 money (safe)
+    if (gameType && playerCount) {
+        const costMap = { classic: 20, fast: 15, power: 40 };
+        const cost = costMap[gameType] || 0;
+
+        if (didWin) {
+            user.money += cost * (playerCount - 1);
+        } else {
+            user.money = Math.max(0, user.money - cost);
+        }
+    }
 
     await user.save();
-
-    res.json(result);
+    console.log(user);
+    res.json({
+        ...result,
+        oldXP: oldLevelXp,
+        money: user.money
+    });
 });
-
-
-
 
 
 module.exports = router;

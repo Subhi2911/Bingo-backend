@@ -87,9 +87,13 @@ const UserSchema = mongoose.Schema({
         type: Number,
         default: 0
     },
-    xp: {
+    totalXp: {
         type: Number,
         default: 0
+    },
+    levelXp:{
+        type:Number,
+        default:0
     },
     rank: {
         type: Number,
@@ -100,6 +104,11 @@ const UserSchema = mongoose.Schema({
         unique: true,
         index: true,
     },
+    lastProcessedGame: {
+    type: String,
+    default: null
+}
+
 
 })
 
