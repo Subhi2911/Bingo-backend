@@ -118,12 +118,12 @@ router.get('/leaderboard', fetchuser, async (req, res) => {
 
         // 🔹 Top 20 users by XP
         const topUsers = await User.find({})
-            .sort({ xp: -1 })
+            .sort({ totalXp: -1 })
             .limit(20)
-            .select('username avatar xp');
+            .select('username avatar totalXp');
 
         // 🔹 Get current user's XP
-        const currentUser = await User.findById(userId).select('xp username avatar');
+        const currentUser = await User.findById(userId).select('totalXp username avatar');
 
         if (!currentUser) {
             return res.status(404).json({ msg: 'User not found' });
@@ -131,7 +131,7 @@ router.get('/leaderboard', fetchuser, async (req, res) => {
 
         // 🔹 Count how many users have MORE XP than this user
         const higherXpCount = await User.countDocuments({
-            xp: { $gt: currentUser.xp }
+            totalXp: { $gt: currentUser.totalXp }
         });
 
         const userRank = higherXpCount + 1;
@@ -147,5 +147,57 @@ router.get('/leaderboard', fetchuser, async (req, res) => {
         res.status(500).send('Server Error');
     }
 });
+
+router.get("/ranking", async (req, res) => {
+    try {
+        const users = await User.find();
+
+        const avatarMap = {};
+
+        users.forEach(user => {
+            const avatar = user.avatar;
+
+            if (!avatarMap[avatar]) {
+                avatarMap[avatar] = {
+                    avatar,
+                    totalXp: 0,
+                    users: []
+                };
+            }
+
+            avatarMap[avatar].totalXp += user.totalXp;
+
+            avatarMap[avatar].users.push({
+                name: user.username,
+                xp: user.totalXp,
+                level: user.level
+            });
+        });
+
+        let avatars = Object.values(avatarMap);
+
+        // Sort users inside each avatar
+        avatars.forEach(avatarGroup => {
+            avatarGroup.users.sort((a, b) => b.xp - a.xp);
+
+            avatarGroup.users = avatarGroup.users.map((user, index) => ({
+                ...user,
+                rank: index + 1
+            }));
+        });
+
+        // Sort avatars by total XP
+        avatars.sort((a, b) => b.totalXp - a.totalXp);
+
+        res.json({
+            avatarOfWeek: avatars[0],
+            avatars
+        });
+
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 
 module.exports = router;
