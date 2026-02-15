@@ -55,6 +55,7 @@ app.use("/api/chat", require("./routes/chat"));
 app.use("/api/messages", require("./routes/messages"));
 app.use("/api/rooms", require("./routes/rooms"));
 app.use("/api/notifications", require("./routes/notification"));
+app.use('/api/spin',require("./routes/spin"));
 
 // ================= SOCKET.IO =================
 const onlineUsers = {};
@@ -73,6 +74,7 @@ io.on("connection", (socket) => {
 
   // ================= JOIN ROOM =================
   socket.on("join_room", async ({ roomCode, userId, username, avatar = "", gameType }) => {
+    
     try {
 
       socket.join(roomCode);
@@ -607,6 +609,8 @@ io.on("connection", (socket) => {
     socket.join(chatId);
   });
 
+  
+
   socket.on("sendMessage", (message) => {
     console.log('app', message);
     const decryptedMessage = {
@@ -616,6 +620,29 @@ io.on("connection", (socket) => {
 
     socket.to(message.chatId).emit("receiveMessage", decryptedMessage);
   });
+
+  //game chats
+  
+  //Join chat room
+  socket.on("join_chat_room", (roomCode) => {
+    socket.join(roomCode);
+    console.log(`Socket ${socket.id} joined room ${roomCode}`);
+  });
+
+  // Send message
+  socket.on("send_message", (data) => {
+    const { roomCode, username, text } = data;
+
+    const messagePayload = {
+      username,
+      text,
+      time: new Date().toISOString(),
+    };
+
+    // Send to everyone INCLUDING sender
+    io.to(roomCode).emit("receive_message", messagePayload);
+  });
+
 
   // ================= DISCONNECT =================
   socket.on("disconnect", async () => {

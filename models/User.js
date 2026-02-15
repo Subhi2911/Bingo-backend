@@ -91,9 +91,9 @@ const UserSchema = mongoose.Schema({
         type: Number,
         default: 0
     },
-    levelXp:{
-        type:Number,
-        default:0
+    levelXp: {
+        type: Number,
+        default: 0
     },
     rank: {
         type: Number,
@@ -105,10 +105,11 @@ const UserSchema = mongoose.Schema({
         index: true,
     },
     lastProcessedGame: {
-    type: String,
-    default: null
-}
-
+        type: String,
+        default: null
+    },
+    lastSpin: { type: Date },
+    doubleCoinsTill: { type: Date }
 
 })
 
