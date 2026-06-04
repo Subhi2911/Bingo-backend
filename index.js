@@ -55,7 +55,7 @@ app.use("/api/chat", require("./routes/chat"));
 app.use("/api/messages", require("./routes/messages"));
 app.use("/api/rooms", require("./routes/rooms"));
 app.use("/api/notifications", require("./routes/notification"));
-app.use('/api/spin',require("./routes/spin"));
+app.use('/api/spin', require("./routes/spin"));
 
 // ================= SOCKET.IO =================
 const onlineUsers = {};
@@ -74,7 +74,7 @@ io.on("connection", (socket) => {
 
   // ================= JOIN ROOM =================
   socket.on("join_room", async ({ roomCode, userId, username, avatar = "", gameType }) => {
-    
+
     try {
 
       socket.join(roomCode);
@@ -337,11 +337,11 @@ io.on("connection", (socket) => {
   });
 
   // ================= MATCHMAKING =================
-  socket.on("find_match", async ({ userId, username, avatar = "", size, gameType }) => {
+  socket.on("find_match", async ({ userId, username, avatar = "", size, gameType, selectedPower = "" }) => {
 
     const alreadyQueued = queue.find((p) => p.userId === userId);
     if (!alreadyQueued) {
-      queue.push({ socketId: socket.id, userId, username, avatar, size, gameType });
+      queue.push({ socketId: socket.id, userId, username, avatar, size, gameType, selectedPower });
     }
 
     const group = queue
@@ -357,7 +357,7 @@ io.on("connection", (socket) => {
       });
 
       const roomCode = generateRoomCode();
-      games[roomCode] = { players, turns: [], currentTurn: 0, picked: [], finished: [] };
+      games[roomCode] = { players, turns: [], currentTurn: 0, picked: [], status:"playing", finished: [],gameType };
       console.log(players);
       await Room.create({
         code: roomCode,
@@ -365,7 +365,8 @@ io.on("connection", (socket) => {
         status: "waiting",
         turn: 0,
         selected: [],
-        gameType: gameType
+        gameType: gameType,
+        powerUsed: false
       });
 
       players.forEach((p) => io.sockets.sockets.get(p.socketId)?.join(roomCode));
@@ -538,7 +539,7 @@ io.on("connection", (socket) => {
     const player = room.players.find(
       p => p.userId.toString() === userId
     );
-    console.log("bb",player);
+    console.log("bb", player);
 
     if (!player) return;
 
@@ -609,7 +610,7 @@ io.on("connection", (socket) => {
     socket.join(chatId);
   });
 
-  
+
 
   socket.on("sendMessage", (message) => {
     console.log('app', message);
@@ -622,7 +623,7 @@ io.on("connection", (socket) => {
   });
 
   //game chats
-  
+
   //Join chat room
   socket.on("join_chat_room", (roomCode) => {
     socket.join(roomCode);
@@ -641,6 +642,34 @@ io.on("connection", (socket) => {
 
     // Send to everyone INCLUDING sender
     io.to(roomCode).emit("receive_message", messagePayload);
+  });
+
+  //power game
+  //on power recieve
+  socket.on("use_power", ({ roomCode, userId, power }) => {
+    const game = games[roomCode];
+
+    if (!game) return;
+
+    if (power === "Shadow Step") {
+
+      const playerIndex = game.turns.findIndex(
+        p => p.userId === userId
+      );
+
+      if (playerIndex === -1) return;
+
+      clearTimeout(turnTimers[roomCode]);
+
+      game.currentTurn = playerIndex;
+
+      io.to(roomCode).emit(
+        "current_turn",
+        game.turns[game.currentTurn]
+      );
+
+      startTurnTimer(roomCode);
+    }
   });
 
 

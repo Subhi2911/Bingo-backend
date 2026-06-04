@@ -11,10 +11,10 @@ async function sendEmail(to, subject, text) {
     
 
     await transporter.sendMail({
-        from: process.env.EMAIL_USER,
+        from: '"BingoBing" <noreply@bingobing.com>',
         to,
         subject,
-        text
+        html: text
     });
 }
 

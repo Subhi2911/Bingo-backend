@@ -52,7 +52,7 @@ router.post("/spin", fetchuser, async (req, res) => {
         res.json({
             prizeIndex,
             reward,
-            coins: user.coins,
+            coins: user.money,
             TotalXp: user.totalXp,
 
         });
