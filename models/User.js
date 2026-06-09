@@ -109,7 +109,11 @@ const UserSchema = mongoose.Schema({
         default: null
     },
     lastSpin: { type: Date },
-    doubleCoinsTill: { type: Date }
+    doubleCoinsTill: { type: Date },
+    fcmToken: {
+        type: String,
+        default: ""
+    },
 
 })
 

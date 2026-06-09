@@ -23,20 +23,30 @@ const safeDecrypt = (text) => {
     return text;
   }
 };
+const Chat = require("./models/Chat");
+const activeChats = {}; // chatId -> Set of socketIds
+
+const admin = require("firebase-admin");
+const serviceAccount = require("./serviceAccountKey.json");
+
+admin.initializeApp({
+  credential: admin.credential.cert(serviceAccount),
+});
+
 
 // ─────────────────────────────────────────────
 // POWER DEFINITIONS
 // ─────────────────────────────────────────────
 const POWER_GROUPS = {
-  EXTRA_TURN:   ["Swift Dash", "Pack Howl", "Dominance", "Blood Frenzy", "Panic Flap"],
-  FREE_MARK:    ["Shadow Step", "Mega Jump"],
-  RANDOM_MARK:  ["Tree Leap", "Tracker Sense", "Charge Run"],
-  FREEZE:       ["Fear Aura", "Hoof Strike", "Venom Bite"],
-  IMMUNITY:     ["Loyal Guard", "Iron Hide", "Steadfast"],
-  REMOVE_MARK:  ["Silent Claws", "Ambush Pounce", "Sneak Bite", "Sticky Tongue", "Egg Bomb", "Ground Slam"],
-  REFLECT:      ["Nine Lives", "Poison Skin", "Feather Shield", "Tiny Target"],
+  EXTRA_TURN: ["Swift Dash", "Pack Howl", "Dominance", "Blood Frenzy", "Panic Flap"],
+  FREE_MARK: ["Shadow Step", "Mega Jump"],
+  RANDOM_MARK: ["Tree Leap", "Tracker Sense", "Charge Run"],
+  FREEZE: ["Fear Aura", "Hoof Strike", "Venom Bite"],
+  IMMUNITY: ["Loyal Guard", "Iron Hide", "Steadfast"],
+  REMOVE_MARK: ["Silent Claws", "Ambush Pounce", "Sneak Bite", "Sticky Tongue", "Egg Bomb", "Ground Slam"],
+  REFLECT: ["Nine Lives", "Poison Skin", "Feather Shield", "Tiny Target"],
   NOT_IMPLEMENTED: ["Mischief Steal", "King's Roar", "Predator Focus", "Illusion Clone",
-                    "Trick Swap", "Mind Games", "Quick Escape", "Coil Trap", "Heat Sense"],
+    "Trick Swap", "Mind Games", "Quick Escape", "Coil Trap", "Heat Sense"],
 };
 
 const getPowerGroup = (power) => {
@@ -94,56 +104,117 @@ const generateRoomCode = () =>
 // ─────────────────────────────────────────────
 const GAME_RULES = {
   classic: { TURN_TIME: 15 },
-  fast:    { TURN_TIME: 5  },
+  fast: { TURN_TIME: 5 },
 };
 const turnTimers = {}; // roomCode -> timeoutId
 
+// socket.id -> chatId
+
 function startTurnTimer(roomCode) {
   const game = games[roomCode];
-  if (!game || game.status === "ended" || !game.turns.length) return;
+
+  if (!game || game.status === "ended" || !game.turns.length) {
+    return;
+  }
 
   clearTimeout(turnTimers[roomCode]);
 
-  const availableNumbers = Array.from({ length: 25 }, (_, i) => i + 1)
-    .filter(n => !game.picked.includes(n));
-  if (!availableNumbers.length) return;
-
-  const turnTime = GAME_RULES[game.gameType]?.TURN_TIME || 15;
-
-  // Skip frozen player automatically
   const currentPlayer = game.turns[game.currentTurn];
-  const effect = game.effects?.[currentPlayer?.userId];
-  if (effect?.frozenUntil && effect.frozenUntil > Date.now()) {
-    // Player is frozen — advance turn without picking
-    game.currentTurn = (game.currentTurn + 1) % game.turns.length;
-    io.to(roomCode).emit("current_turn", game.turns[game.currentTurn]);
+
+  const availableNumbers = Array.from(
+    { length: 25 },
+    (_, i) => i + 1
+  ).filter(n => !game.picked.includes(n));
+
+  if (!availableNumbers.length) {
+    return;
+  }
+
+  // Initialize missed turns tracker
+  if (!game.missedTurns) {
+    game.missedTurns = {};
+  }
+
+  const misses = game.missedTurns[currentPlayer.userId] || 0;
+
+  // Normal game timer
+  const defaultTurnTime =
+    GAME_RULES[game.gameType]?.TURN_TIME || 15;
+
+  // AFK penalty after 3 missed turns
+  const turnTime =
+    misses >= 3
+      ? Math.min(5, defaultTurnTime)
+      : defaultTurnTime;
+
+  // Handle frozen player
+  const effect = game.effects?.[currentPlayer.userId];
+
+  if (
+    effect?.frozenUntil &&
+    effect.frozenUntil > Date.now()
+  ) {
+    game.currentTurn =
+      (game.currentTurn + 1) % game.turns.length;
+
+    io.to(roomCode).emit(
+      "current_turn",
+      game.turns[game.currentTurn]
+    );
+
     startTurnTimer(roomCode);
     return;
   }
 
   turnTimers[roomCode] = setTimeout(() => {
     const randomNumber =
-      availableNumbers[Math.floor(Math.random() * availableNumbers.length)];
+      availableNumbers[
+      Math.floor(Math.random() * availableNumbers.length)
+      ];
 
     game.picked.push(randomNumber);
 
-    // Track who marked it (for REMOVE_MARK)
-    if (!game.playerMarkedNumbers) game.playerMarkedNumbers = {};
-    const pid = game.turns[game.currentTurn]?.userId;
-    if (pid) {
-      if (!game.playerMarkedNumbers[pid]) game.playerMarkedNumbers[pid] = [];
-      game.playerMarkedNumbers[pid].push(randomNumber);
+    // Increase missed turn count
+    game.missedTurns[currentPlayer.userId] =
+      (game.missedTurns[currentPlayer.userId] || 0) + 1;
+
+    // Optional AFK notification
+    if (game.missedTurns[currentPlayer.userId] === 3) {
+      io.to(roomCode).emit("player_afk", {
+        userId: currentPlayer.userId,
+      });
     }
+
+    // Track marked number
+    if (!game.playerMarkedNumbers) {
+      game.playerMarkedNumbers = {};
+    }
+
+    if (!game.playerMarkedNumbers[currentPlayer.userId]) {
+      game.playerMarkedNumbers[currentPlayer.userId] = [];
+    }
+
+    game.playerMarkedNumbers[currentPlayer.userId].push(
+      randomNumber
+    );
 
     Room.updateOne(
       { code: roomCode },
       { $addToSet: { selected: randomNumber } }
     ).catch(console.error);
 
-    io.to(roomCode).emit("number_picked", game.picked);
+    io.to(roomCode).emit(
+      "number_picked",
+      game.picked
+    );
 
-    game.currentTurn = (game.currentTurn + 1) % game.turns.length;
-    io.to(roomCode).emit("current_turn", game.turns[game.currentTurn]);
+    game.currentTurn =
+      (game.currentTurn + 1) % game.turns.length;
+
+    io.to(roomCode).emit(
+      "current_turn",
+      game.turns[game.currentTurn]
+    );
 
     startTurnTimer(roomCode);
   }, turnTime * 1000);
@@ -157,11 +228,11 @@ function handleUsePower(socket, io, { roomCode, userId, power, group, targetId, 
   const game = games[roomCode];
 
   // ── Validation ────────────────────────────
-  if (!game)                      return socket.emit("power_failed", { reason: "Room not found" });
-  if (game.status === "ended")    return socket.emit("power_failed", { reason: "Game has ended" });
-  if (!game.powerUsed)            game.powerUsed = {};
-  if (!game.effects)              game.effects   = {};
-  if (!game.playerMarkedNumbers)  game.playerMarkedNumbers = {};
+  if (!game) return socket.emit("power_failed", { reason: "Room not found" });
+  if (game.status === "ended") return socket.emit("power_failed", { reason: "Game has ended" });
+  if (!game.powerUsed) game.powerUsed = {};
+  if (!game.effects) game.effects = {};
+  if (!game.playerMarkedNumbers) game.playerMarkedNumbers = {};
 
   if (game.powerUsed[userId])
     return socket.emit("power_failed", { reason: "Power already used" });
@@ -421,14 +492,15 @@ io.on("connection", (socket) => {
           powerUsed: {},
           effects: {},
           playerMarkedNumbers: {},
+          missedTurns: 0,
         };
       }
 
       const game = games[roomCode];
 
       // Ensure power fields exist on older rooms
-      if (!game.powerUsed)           game.powerUsed           = {};
-      if (!game.effects)             game.effects             = {};
+      if (!game.powerUsed) game.powerUsed = {};
+      if (!game.effects) game.effects = {};
       if (!game.playerMarkedNumbers) game.playerMarkedNumbers = {};
 
       const existing = game.players.find((p) => p.userId === userId);
@@ -490,8 +562,17 @@ io.on("connection", (socket) => {
     const game = games[roomCode];
     if (!game) return;
 
+    if (!game.missedTurns) {
+      game.missedTurns = {};
+    }
+
+
     const current = game.turns[game.currentTurn];
     if (!current || current.socketId !== socket.id) return;
+
+    // Player acted manually, reset AFK counter
+    game.missedTurns[current.userId] = 0;
+
 
     // Check frozen
     const fx = game.effects?.[current.userId];
@@ -586,6 +667,7 @@ io.on("connection", (socket) => {
     game.playerMarkedNumbers = {};
     game.turns = [...game.players].sort(() => Math.random() - 0.5);
     game.currentTurn = 0;
+    game.missedTurns = 0;
     io.to(roomCode).emit("restart_game", { turns: game.turns, currentTurn: game.turns[0] });
     startTurnTimer(roomCode);
   }
@@ -636,6 +718,7 @@ io.on("connection", (socket) => {
         powerUsed: {},
         effects: {},
         playerMarkedNumbers: {},
+        missedTurns: 0,
       };
 
       await Room.create({
@@ -743,6 +826,7 @@ io.on("connection", (socket) => {
       powerUsed: {},
       effects: {},
       playerMarkedNumbers: {},
+      missedTurns: 0,
     };
 
     const game = games[roomCode];
@@ -763,11 +847,98 @@ io.on("connection", (socket) => {
   socket.on("joinChat", (chatId) => {
     socket.join(chatId);
   });
+  socket.on("active_chat", ({ chatId }) => {
+    activeChats[socket.id] = chatId;
+  });
 
-  socket.on("sendMessage", (message) => {
+  socket.on("leave_active_chat", () => {
+    delete activeChats[socket.id];
+  });
+
+  socket.on("sendMessage", async (message) => {
     const decryptedMessage = { ...message, text: safeDecrypt(message.text) };
     socket.to(message.chatId).emit("receiveMessage", decryptedMessage);
+
+    const chat = await Chat.findById(message.chatId);
+    const receivers = chat.participants.filter(
+      // ✅ FIX: normalize both sides to strings so ObjectId vs string never mismatches
+      p => p.toString() !== message?.sender._id?.toString()
+    );
+
+    receivers.forEach(userId => {
+      // ✅ FIX: stringify the ObjectId before looking up in onlineUsers
+      const socketId = onlineUsers[userId.toString()];
+      if (!socketId) return; // user is offline — no notification needed
+
+      // ✅ activeChats is now the shared module-level map, so this lookup
+      //    correctly reflects what the *receiver's* socket registered
+      const isInSameChat = activeChats[socketId] === message.chatId;
+
+      if (!isInSameChat) {
+        io.to(socketId).emit("newNotification", {
+          type: "message",
+          title: message.senderName,
+          body: decryptedMessage.text.length > 100 ? decryptedMessage.text.substring(0, 100) + "..." : decryptedMessage.text,
+          chatId: message.chatId,
+          sender: {
+            _id: message.sender._id,
+            username: message.sender.username,
+            avatar: message.sender.avatar,
+          },
+        });
+      }
+    });
+    const User = require("./models/User");
+
+    for (const userId of receivers) {
+      const receiver = await User.findById(userId);
+      if (!receiver?.fcmToken) continue;
+
+      try {
+        await admin.messaging().send({
+          token: receiver.fcmToken,
+          notification: {
+            title: `Message From ${message.sender.username}`,
+            body: decryptedMessage.text,
+          },
+          data: {
+            chatId: message.chatId.toString(),
+            senderId: message.sender._id.toString(),
+            senderUsername: message.sender.username,
+            senderAvatar: message.sender.avatar || "",
+            type: "message",
+          },
+          // ✅ Android: high priority + channel so it shows in drawer when killed
+          android: {
+            priority: "high",
+            notification: {
+              channelId: "default",
+              sound: "default",
+              priority: "high",
+              defaultSound: true,
+              defaultVibrateTimings: true,
+            },
+          },
+          // ✅ iOS: sound when killed
+          apns: {
+            payload: {
+              aps: {
+                sound: "default",
+                badge: 1,
+              },
+            },
+            headers: {
+              "apns-priority": "10",
+            },
+          },
+        });
+        console.log("✅ Push sent to", receiver.username);
+      } catch (err) {
+        console.error("❌ Push failed:", err.message);
+      }
+    }
   });
+
 
   socket.on("join_chat_room", (roomCode) => {
     socket.join(roomCode);
@@ -803,7 +974,7 @@ io.on("connection", (socket) => {
         io.to(roomCode).emit("update_players", game.players);
       } else if (game.status === "waiting") {
         game.players = game.players.filter(p => p.userId !== userId);
-        game.turns   = game.turns.filter(p => p.userId !== userId);
+        game.turns = game.turns.filter(p => p.userId !== userId);
         await Room.updateOne({ code: roomCode }, { $pull: { players: { userId } } }).catch(console.error);
         io.to(roomCode).emit("update_players", game.players);
         if (game.players.length === 0) delete games[roomCode];

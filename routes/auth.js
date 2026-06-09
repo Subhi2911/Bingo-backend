@@ -407,6 +407,42 @@ router.post("/select", fetchuser, async (req, res) => {
 	}
 });
 
+//save fcm
+router.post("/save-fcm-token", fetchuser, async (req, res) => {
+	try {
+		const { fcmToken } = req.body;
+
+		if (!fcmToken) {
+			return res.status(400).json({
+				success: false,
+				error: "FCM token is required"
+			});
+		}
+
+		await User.findByIdAndUpdate(
+			req.user.id,
+			{
+				fcmToken
+			},
+			{
+				new: true
+			}
+		);
+
+		res.json({
+			success: true,
+			message: "FCM token saved successfully"
+		});
+
+	} catch (error) {
+		console.error("Save FCM token error:", error);
+		res.status(500).json({
+			success: false,
+			error: "Internal Server Error"
+		});
+	}
+});
+
 
 // Export the router (accepts io if needed for future use)
 module.exports = router;

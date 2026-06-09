@@ -1,6 +1,9 @@
 # Node modules
 node_modules/
 
+# service key
+serviceAccountKey.json/
+
 # Environment variables
 .env
 .env.local
