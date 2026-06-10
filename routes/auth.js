@@ -265,8 +265,13 @@ router.post("/accept-request/:id", fetchuser, async (req, res) => {
 		if (!toUser.pendingRequests.includes(fromUserId)) {
 			return res.status(400).json({ error: "No pending friend request from this user" });
 		}
-		fromUser.pendingRequests = fromUser.pendingRequests.filter(id => id.toString() !== toUserId);
-		toUser.sentRequests = toUser.sentRequests.filter(id => id.toString() !== fromUserId);
+		toUser.pendingRequests = toUser.pendingRequests.filter(
+			id => id.toString() !== fromUserId
+		);
+
+		fromUser.sentRequests = fromUser.sentRequests.filter(
+			id => id.toString() !== toUserId
+		);
 		toUser.friends.push(fromUserId);
 		fromUser.friends.push(toUserId);
 		await toUser.save();
@@ -296,8 +301,13 @@ router.post("/reject-request/:id", fetchuser, async (req, res) => {
 		if (!fromUser.pendingRequests.includes(toUserId)) {
 			return res.status(400).json({ error: "No pending friend request from this user" });
 		}
-		fromUser.pendingRequests = fromUser.pendingRequests.filter(id => id.toString() !== toUserId);
-		toUser.sentRequests = toUser.sentRequests.filter(id => id.toString() !== fromUserId);
+		toUser.pendingRequests = toUser.pendingRequests.filter(
+			id => id.toString() !== fromUserId
+		);
+
+		fromUser.sentRequests = fromUser.sentRequests.filter(
+			id => id.toString() !== toUserId
+		);
 		await toUser.save();
 		await fromUser.save();
 		res.json(fromUser);

@@ -24,6 +24,7 @@ const safeDecrypt = (text) => {
   }
 };
 const Chat = require("./models/Chat");
+const User = require("./models/User");
 const activeChats = {}; // chatId -> Set of socketIds
 
 const admin = require("firebase-admin");
@@ -631,6 +632,21 @@ io.on("connection", (socket) => {
     });
 
     const winner = game.players.find(p => p.userId === winnerId);
+    const user = await User.findById(winner.userId);
+
+    if (!user.wins || user.wins.length === 0) {
+      user.wins = [{
+        classic: 0,
+        fast: 0,
+        power: 0,
+        private: 0,
+      }];
+    }
+
+    user.wins[0].classic += 1; // or fast/power/private
+
+    await user.save();
+
     if (!winner) {
       console.error(`Winner not found for room ${roomCode}.`);
       return;
@@ -864,10 +880,11 @@ io.on("connection", (socket) => {
       // ✅ FIX: normalize both sides to strings so ObjectId vs string never mismatches
       p => p.toString() !== message?.sender._id?.toString()
     );
-
+    
     receivers.forEach(userId => {
       // ✅ FIX: stringify the ObjectId before looking up in onlineUsers
       const socketId = onlineUsers[userId.toString()];
+      console.log("jiklkl",socketId);
       if (!socketId) return; // user is offline — no notification needed
 
       // ✅ activeChats is now the shared module-level map, so this lookup
@@ -877,7 +894,7 @@ io.on("connection", (socket) => {
       if (!isInSameChat) {
         io.to(socketId).emit("newNotification", {
           type: "message",
-          title: message.senderName,
+          title: message.sender.username,
           body: decryptedMessage.text.length > 100 ? decryptedMessage.text.substring(0, 100) + "..." : decryptedMessage.text,
           chatId: message.chatId,
           sender: {
@@ -886,6 +903,7 @@ io.on("connection", (socket) => {
             avatar: message.sender.avatar,
           },
         });
+        console.log("message sent to",message.sender.username);
       }
     });
     const User = require("./models/User");
@@ -893,6 +911,8 @@ io.on("connection", (socket) => {
     for (const userId of receivers) {
       const receiver = await User.findById(userId);
       if (!receiver?.fcmToken) continue;
+      const socketId = onlineUsers[userId.toString()];
+      if (socketId) continue;
 
       try {
         await admin.messaging().send({
