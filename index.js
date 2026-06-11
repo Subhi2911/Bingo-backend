@@ -880,11 +880,11 @@ io.on("connection", (socket) => {
       // ✅ FIX: normalize both sides to strings so ObjectId vs string never mismatches
       p => p.toString() !== message?.sender._id?.toString()
     );
-    
+
     receivers.forEach(userId => {
       // ✅ FIX: stringify the ObjectId before looking up in onlineUsers
       const socketId = onlineUsers[userId.toString()];
-      console.log("jiklkl",socketId);
+      console.log("jiklkl", socketId);
       if (!socketId) return; // user is offline — no notification needed
 
       // ✅ activeChats is now the shared module-level map, so this lookup
@@ -903,7 +903,7 @@ io.on("connection", (socket) => {
             avatar: message.sender.avatar,
           },
         });
-        console.log("message sent to",message.sender.username);
+        console.log("message sent to", message.sender.username);
       }
     });
     const User = require("./models/User");
@@ -967,6 +967,55 @@ io.on("connection", (socket) => {
   socket.on("send_message", (data) => {
     const { roomCode, username, text } = data;
     io.to(roomCode).emit("receive_message", { username, text, time: new Date().toISOString() });
+  });
+
+  //______________________________________________
+  // NOTIFICATIONS
+  //______________________________________________
+  socket.on("sendFriendRequest", async ({ receiverId, senderId, senderName, senderAvatar }) => {
+    const receiverSocketId = onlineUsers[receiverId];
+    //when user is online, send real-time notification via Socket.IO
+    if (receiverSocketId) {
+      io.to(receiverSocketId).emit("newNotification", {
+        type: "friendRequest",
+        title: "Friend Request",
+        body: `You have a new friend request from ${senderName}.`,
+        senderId:senderId,
+        receiverId:receiverId,
+        senderAvatar:senderAvatar
+      });
+      console.log("sent request to", receiverId);
+    } else {
+      //when user is offline, send push notification via FCM
+      const User = require("./models/User");
+      const receiver = await User.findById(receiverId);
+      if (!receiver?.fcmToken) return;
+      try {
+        await admin.messaging().send({
+          token: receiver.fcmToken,
+          notification: {
+            title: "Friend Request",
+            body: `You have a new friend request from ${senderName}.`,
+          },
+          data: {
+            senderId,
+            receiverId,
+          },
+        });
+        console.log("Push sent to", receiver.username);
+      } catch (err) {
+        console.error("Push failed:", err.message);
+      }
+    }
+    //save in database 
+    const Notification = require("./models/Notification");
+    await Notification.create({
+      type: "FRIEND_REQUEST",
+      user: receiverId,
+      title: "Friend Request",
+      body: `You have a new friend request from ${senderName}.`,
+      data: { senderId, receiverId },
+    });
   });
 
   // ─────────────────────────────────────────

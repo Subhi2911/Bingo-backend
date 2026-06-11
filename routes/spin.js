@@ -3,11 +3,15 @@ const router = express.Router();
 const User = require("../models/User");
 const fetchuser = require("../middleware/fetchuser");
 const rewards = [
-    { label: "50 Coins", type: "coins", value: 50 },
-    { label: "100 Coins", type: "coins", value: 100 },
-    { label: "20 XP", type: "xp", value: 20 },
-    { label: "50 XP", type: "xp", value: 50 },
-    { label: "Nothing 😢", type: "none", value: 0 }
+    { label: "50 Coins",       type: "coins",        value: 50 },
+    { label: "100 Coins",      type: "coins",        value: 100 },
+    { label: "500 Coins",      type: "coins",        value: 500 },
+    { label: "20 XP",          type: "xp",           value: 20 },
+    { label: "100 XP",         type: "xp",           value: 100 },
+    { label: "+1 Star ⭐",     type: "stars",        value: 1 },
+    { label: "2× Coins 1hr",   type: "doubleCoins",  value: 60 },   // minutes
+    { label: "Free Power ⚡",  type: "power",        value: 1 },
+    { label: "Nothing 😢",     type: "none",         value: 0 },
 ];
 
 

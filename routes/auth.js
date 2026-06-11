@@ -453,6 +453,24 @@ router.post("/save-fcm-token", fetchuser, async (req, res) => {
 	}
 });
 
+//change avatar and deduct money
+router.post("/change-avatar", fetchuser, async (req, res) => {
+	try {
+		const { avatar } = req.body;
+		const user = await User.findById(req.user.id);
+		if (user.money < 2000) {
+			return res.status(400).json({ error: "Not enough money" });
+		}
+		user.avatar = avatar;
+		user.money -= 2000;
+		await user.save();
+		res.json({ success: true, avatar: user.avatar, money: user.money });
+	} catch (error) {
+		console.error(error);
+		res.status(500).json({ error: "Internal Server Error" });
+	}
+});
+
 
 // Export the router (accepts io if needed for future use)
 module.exports = router;
