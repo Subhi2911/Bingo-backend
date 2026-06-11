@@ -617,7 +617,7 @@ io.on("connection", (socket) => {
   // ─────────────────────────────────────────
   // GAME END
   // ─────────────────────────────────────────
-  socket.on("game_end", async ({ roomCode, winnerId }) => {
+  socket.on("game_end", async ({ roomCode, winnerId, gameType }) => {
     const game = games[roomCode];
     if (!game || game.status === "ended") return;
 
@@ -635,15 +635,15 @@ io.on("connection", (socket) => {
     const user = await User.findById(winner.userId);
 
     if (!user.wins || user.wins.length === 0) {
-      user.wins = [{
+      user.wins = {
         classic: 0,
         fast: 0,
         power: 0,
         private: 0,
-      }];
+      };
     }
 
-    user.wins[0].classic += 1; // or fast/power/private
+    user.wins.gameType += 1; // or fast/power/private
 
     await user.save();
 
@@ -705,64 +705,81 @@ io.on("connection", (socket) => {
   // MATCHMAKING
   // ─────────────────────────────────────────
   socket.on("find_match", async ({ userId, username, avatar = "", size, gameType, selectedPower = "" }) => {
-    const alreadyQueued = queue.find((p) => p.userId === userId);
-    if (!alreadyQueued) {
-      queue.push({ socketId: socket.id, userId, username, avatar, size, gameType, selectedPower });
+
+    // ── 1. Remove any stale entry for this userId (reconnect / retry) ──────
+    queue = queue.filter(p => p.userId !== userId);
+
+    // ── 2. Add fresh entry ─────────────────────────────────────────────────
+    queue.push({ socketId: socket.id, userId, username, avatar, size, gameType, selectedPower });
+
+    // ── 3. Build candidate group: same size + gameType, unique userIds ─────
+    const candidates = queue.filter(
+      p => p.size === size && p.gameType === gameType
+    );
+
+    // ── 4. Only proceed if we have exactly enough ──────────────────────────
+    if (candidates.length < size) return;
+
+    const players = candidates.slice(0, size);
+    const matchedUserIds = new Set(players.map(p => p.userId));
+
+    // ── 5. Atomically remove ALL matched players from the queue ────────────
+    //    (do this BEFORE any async work so no second match_found is emitted)
+    queue = queue.filter(p => !matchedUserIds.has(p.userId));
+
+    // ── 6. Verify all sockets are still connected ──────────────────────────
+    const livePlayers = players.filter(p => io.sockets.sockets.has(p.socketId));
+
+    if (livePlayers.length < size) {
+      // Put still-connected players back and wait for more
+      livePlayers.forEach(p => queue.push(p));
+      return;
     }
 
-    const group = queue
-      .filter((p) => p.size === size)
-      .filter((p) => p.gameType === gameType)
-      .filter((p, i, arr) => arr.findIndex((x) => x.userId === p.userId) === i);
+    // ── 7. Create room ─────────────────────────────────────────────────────
+    const roomCode = generateRoomCode();
+    games[roomCode] = {
+      players: livePlayers,
+      turns: [],
+      currentTurn: 0,
+      picked: [],
+      status: "playing",
+      finished: [],
+      gameType,
+      powerUsed: {},
+      effects: {},
+      playerMarkedNumbers: {},
+      missedTurns: {},
+    };
 
-    if (group.length >= size) {
-      const players = group.slice(0, size);
-      players.forEach((p) => {
-        const i = queue.findIndex((q) => q.socketId === p.socketId);
-        if (i !== -1) queue.splice(i, 1);
+    await Room.create({
+      code: roomCode,
+      players: livePlayers.map(p => ({ userId: p.userId, username: p.username, avatar: p.avatar })),
+      status: "waiting",
+      turn: 0,
+      selected: [],
+      gameType,
+      powerUsed: false,
+    });
+
+    livePlayers.forEach(p => io.sockets.sockets.get(p.socketId)?.join(roomCode));
+    livePlayers.forEach(p => {
+      io.to(p.socketId).emit("match_found", {
+        roomCode,
+        players: livePlayers.map(x => ({ userId: x.userId, username: x.username, avatar: x.avatar })),
       });
+    });
 
-      const roomCode = generateRoomCode();
-      games[roomCode] = {
-        players,
-        turns: [],
-        currentTurn: 0,
-        picked: [],
-        status: "playing",
-        finished: [],
-        gameType,
-        powerUsed: {},
-        effects: {},
-        playerMarkedNumbers: {},
-        missedTurns: 0,
-      };
+    const game = games[roomCode];
+    game.turns = [...game.players].sort(() => Math.random() - 0.5);
+    game.currentTurn = 0;
+    io.to(roomCode).emit("turn_order", game.turns);
+    io.to(roomCode).emit("current_turn", game.turns[0]);
+    startTurnTimer(roomCode);
+  });
 
-      await Room.create({
-        code: roomCode,
-        players: players.map((p) => ({ userId: p.userId, username: p.username, avatar: p.avatar })),
-        status: "waiting",
-        turn: 0,
-        selected: [],
-        gameType,
-        powerUsed: false,
-      });
-
-      players.forEach((p) => io.sockets.sockets.get(p.socketId)?.join(roomCode));
-      players.forEach((p) => {
-        io.to(p.socketId).emit("match_found", {
-          roomCode,
-          players: players.map((x) => ({ userId: x.userId, username: x.username, avatar: x.avatar })),
-        });
-      });
-
-      const game = games[roomCode];
-      if (!game.turns.length) {
-        game.turns = [...game.players].sort(() => Math.random() - 0.5);
-        game.currentTurn = 0;
-        io.to(roomCode).emit("turn_order", game.turns);
-        io.to(roomCode).emit("current_turn", game.turns[0]);
-      }
-    }
+  socket.on("cancel_match", ({ userId }) => {
+    queue = queue.filter(p => p.userId !== userId);
   });
 
   // ─────────────────────────────────────────
@@ -980,9 +997,9 @@ io.on("connection", (socket) => {
         type: "friendRequest",
         title: "Friend Request",
         body: `You have a new friend request from ${senderName}.`,
-        senderId:senderId,
-        receiverId:receiverId,
-        senderAvatar:senderAvatar
+        senderId: senderId,
+        receiverId: receiverId,
+        senderAvatar: senderAvatar
       });
       console.log("sent request to", receiverId);
     } else {

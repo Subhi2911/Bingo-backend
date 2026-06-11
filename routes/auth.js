@@ -277,7 +277,7 @@ router.post("/accept-request/:id", fetchuser, async (req, res) => {
 		await toUser.save();
 		await fromUser.save();
 		const safeUser = await User.findById(fromUserId).select(
-			'avatar username bio wins money level xp rank friends'
+			'avatar username bio wins money level totalXp rank friends'
 		);
 		console.log(res);
 
@@ -321,7 +321,7 @@ router.post("/reject-request/:id", fetchuser, async (req, res) => {
 router.get("/friends", fetchuser, async (req, res) => {
 	try {
 		const userId = req.user.id;
-		const user = await User.findById(userId).populate('friends', 'avatar  username  email  date  bio  pendingRequests  sentRequests  wins  money  level  xp  rank');
+		const user = await User.findById(userId).populate('friends', 'avatar  username  email  date  bio  pendingRequests  sentRequests  wins  money  level  totalXp  rank');
 		res.json(user.friends);
 
 	} catch (error) {
@@ -333,7 +333,7 @@ router.get("/friends", fetchuser, async (req, res) => {
 router.get("/pending-requests", fetchuser, async (req, res) => {
 	try {
 		const userId = req.user.id;
-		const user = await User.findById(userId).populate('pendingRequests', 'avatar  username  email  date  bio  friends  sentRequests  wins  money  level  xp   rank');
+		const user = await User.findById(userId).populate('pendingRequests', 'avatar  username  email  date  bio  friends  sentRequests  wins  money  level  totalXp   rank');
 		res.json(user.pendingRequests);
 		console.log("Pending Requests:", user.pendingRequests);
 	} catch (error) {
@@ -378,7 +378,7 @@ router.get("/search-user", fetchuser, async (req, res) => {
 				{ username: { $regex: q, $options: "i" } }
 			]
 		})
-			.select("username playerId avatar level xp rank")
+			.select("username playerId avatar level totalXp rank")
 			.limit(10);
 
 		res.json(users);
