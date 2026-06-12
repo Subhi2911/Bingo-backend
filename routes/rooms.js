@@ -8,7 +8,6 @@ router.get('/:roomCode', fetchuser, async (req, res) => {
     try {
 
         const { roomCode } = req.params;
-        console.log(roomCode);
         const room = await Room.findOne({ code: roomCode });
 
         if (!room) {
@@ -27,7 +26,6 @@ router.get('/:roomCode', fetchuser, async (req, res) => {
 
     } catch (err) {
         console.error('Error fetching room:', err);
-        console.log(err);
         res.status(500).json({ error: 'Server error' });
     }
 });

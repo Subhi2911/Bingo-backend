@@ -61,7 +61,7 @@ const getTimeBonus = (seconds, gameType) => {
 // POST /api/game/update-progress
 router.post('/update-progress', fetchuser, async (req, res) => {
     const { gameId, didWin, gameType, playerCount, duration } = req.body;
-    console.log(duration)
+    
     if (!gameId) {
         return res.status(400).json({ error: "gameId required" });
     }
@@ -103,7 +103,6 @@ router.post('/update-progress', fetchuser, async (req, res) => {
     }
 
     await user.save();
-    console.log(user);
     res.json({
         ...result,
         oldXP: oldLevelXp,

@@ -1,3 +1,4 @@
+/* eslint-disable no-unused-vars */
 /* eslint-disable no-shadow */
 const games = {};
 let queue = [];
@@ -707,8 +708,7 @@ function handleUsePower(socket, io, { roomCode, userId, power, group, targetId, 
 // CONNECTION
 // ─────────────────────────────────────────────
 io.on("connection", (socket) => {
-  console.log("🟢 User connected:", socket.id);
-
+ 
   socket.on("userOnline", (userId) => {
     onlineUsers[userId] = socket.id;
     io.emit("updateOnlineUsers", Object.keys(onlineUsers));
@@ -768,7 +768,6 @@ io.on("connection", (socket) => {
       }
 
       io.to(roomCode).emit("update_players", game.players);
-      console.log(`✅ ${username} joined room ${roomCode}`);
     } catch (err) {
       console.error(err);
       socket.emit("error", "Failed to join room");
@@ -904,7 +903,6 @@ io.on("connection", (socket) => {
       });
 
       io.to(roomCode).emit("update_players", game.players);
-      console.log(`🔄 ${userId} rejoined room ${roomCode}`);
       return;
     }
     // No active game found
@@ -931,7 +929,6 @@ io.on("connection", (socket) => {
     // ── GUARD: don't save if all players are disconnected (ghost game) ──
     const anyConnected = game.players.some(p => !p.disconnected);
     if (!anyConnected) {
-      console.log(`🗑️ Room ${roomCode} ended with all players disconnected — not saving.`);
       delete games[roomCode];
       return;
     }
@@ -1119,7 +1116,7 @@ io.on("connection", (socket) => {
       socket.join(roomCode);
       socket.emit("private_room_created", { roomCode, players });
     } catch (err) {
-      console.error("❌ Private room creation failed:", err);
+      console.error("Private room creation failed:", err);
       socket.emit("error", "Failed to create private room");
     }
   });
@@ -1207,17 +1204,16 @@ io.on("connection", (socket) => {
 
     const chat = await Chat.findById(message.chatId);
     const receivers = chat.participants.filter(
-      // ✅ FIX: normalize both sides to strings so ObjectId vs string never mismatches
+      // FIX: normalize both sides to strings so ObjectId vs string never mismatches
       p => p.toString() !== message?.sender._id?.toString()
     );
 
     receivers.forEach(userId => {
-      // ✅ FIX: stringify the ObjectId before looking up in onlineUsers
+      // FIX: stringify the ObjectId before looking up in onlineUsers
       const socketId = onlineUsers[userId.toString()];
-      console.log("jiklkl", socketId);
       if (!socketId) return; // user is offline — no notification needed
 
-      // ✅ activeChats is now the shared module-level map, so this lookup
+      // activeChats is now the shared module-level map, so this lookup
       //    correctly reflects what the *receiver's* socket registered
       const isInSameChat = activeChats[socketId] === message.chatId;
 
@@ -1233,7 +1229,6 @@ io.on("connection", (socket) => {
             avatar: message.sender.avatar,
           },
         });
-        console.log("message sent to", message.sender.username);
       }
     });
     const User = require("./models/User");
@@ -1258,7 +1253,7 @@ io.on("connection", (socket) => {
             senderAvatar: message.sender.avatar || "",
             type: "message",
           },
-          // ✅ Android: high priority + channel so it shows in drawer when killed
+          // Android: high priority + channel so it shows in drawer when killed
           android: {
             priority: "high",
             notification: {
@@ -1282,7 +1277,6 @@ io.on("connection", (socket) => {
             },
           },
         });
-        console.log("✅ Push sent to", receiver.username);
       } catch (err) {
         console.error("❌ Push failed:", err.message);
       }
@@ -1319,7 +1313,6 @@ io.on("connection", (socket) => {
         receiverId: receiverId,
         senderAvatar: senderAvatar
       });
-      console.log("sent request to", receiverId);
     } else {
       //when user is offline, send push notification via FCM
       const User = require("./models/User");
@@ -1337,7 +1330,6 @@ io.on("connection", (socket) => {
             receiverId,
           },
         });
-        console.log("Push sent to", receiver.username);
       } catch (err) {
         console.error("Push failed:", err.message);
       }
@@ -1357,7 +1349,6 @@ io.on("connection", (socket) => {
   // DISCONNECT
   // ─────────────────────────────────────────
   socket.on("disconnect", async () => {
-    console.log("❌ User disconnected:", socket.id);
     for (let [userId, sId] of Object.entries(onlineUsers)) {
       if (sId === socket.id) { delete onlineUsers[userId]; break; }
     }

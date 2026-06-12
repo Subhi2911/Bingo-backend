@@ -1,3 +1,4 @@
+/* eslint-disable no-shadow */
 const { otpEmailTemplate } = require('../utils/otpEmailTemplate');
 const express = require("express");
 //const User = require('../models/User');
@@ -216,7 +217,6 @@ router.get("/user/:id", async (req, res) => {
 		if (!user) {
 			return res.status(404).json({ error: "User not found" });
 		}
-		console.log("Fetched user:", user);
 		res.json(user);
 	} catch (error) {
 		console.error(error.message);
@@ -229,7 +229,6 @@ router.post("/send-request/:id", fetchuser, async (req, res) => {
 	try {
 		let success = false;
 		const toUserId = req.params.id;
-		console.log("To User ID:", toUserId);
 		const fromUserId = req.user.id;
 		if (toUserId === fromUserId) {
 			return res.status(400).json({ error: "Cannot send friend request to yourself" });
@@ -282,7 +281,6 @@ router.post("/accept-request/:id", fetchuser, async (req, res) => {
 		const safeUser = await User.findById(fromUserId).select(
 			'avatar username bio wins money level totalXp rank friends'
 		);
-		console.log(res);
 
 		res.json({ safeUser, message: "Friend request accepted" });
 	} catch (error) {
@@ -338,7 +336,6 @@ router.get("/pending-requests", fetchuser, async (req, res) => {
 		const userId = req.user.id;
 		const user = await User.findById(userId).populate('pendingRequests', 'avatar  username  email  date  bio  friends  sentRequests  wins  money  level  totalXp   rank');
 		res.json(user.pendingRequests);
-		console.log("Pending Requests:", user.pendingRequests);
 	} catch (error) {
 		console.error(error.message);
 		res.status(500).send("Internal server error");

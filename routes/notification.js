@@ -6,11 +6,8 @@ const { decrypt } = require("../utils/encryption");
 // GET all notifications for a user
 router.get("/", fetchuser, async (req, res) => {
   try {
-    console.log("REQ.USER:", req.user);
-    console.log("REQ.USER._ID:", req.user.id);
     const notifications = await Notification.find({ user: req.user.id })
       .sort({ createdAt: -1 });
-    console.log(notifications);
     res.status(200).json(notifications);
   } catch (err) {
     res.status(500).json({ error: "Failed to fetch notifications" });
