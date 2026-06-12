@@ -29,7 +29,13 @@ const User = require("./models/User");
 const activeChats = {}; // chatId -> Set of socketIds
 
 const admin = require("firebase-admin");
-const serviceAccount = require("./serviceAccountKey.json");
+let serviceAccount;
+
+try {
+  serviceAccount = require("./serviceAccountKey.json");
+} catch (error) {
+  serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+}
 
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
@@ -708,7 +714,7 @@ function handleUsePower(socket, io, { roomCode, userId, power, group, targetId, 
 // CONNECTION
 // ─────────────────────────────────────────────
 io.on("connection", (socket) => {
- 
+
   socket.on("userOnline", (userId) => {
     onlineUsers[userId] = socket.id;
     io.emit("updateOnlineUsers", Object.keys(onlineUsers));
