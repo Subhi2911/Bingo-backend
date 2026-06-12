@@ -1,3 +1,4 @@
+const { otpEmailTemplate } = require('../utils/otpEmailTemplate');
 const express = require("express");
 //const User = require('../models/User');
 const router = express.Router();
@@ -6,6 +7,8 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const fetchuser = require('../middleware/fetchuser');
 const User = require("../models/User");
+const Notification = require("../models/Notification")
+
 // const Notification = require("../models/Notification");
 // const Chat = require("../models/Chat");
 
@@ -140,7 +143,7 @@ router.post('/forgot-password', async (req, res) => {
 		user.otpExpiry = otpExpiry;
 		await user.save();
 
-		await sendEmail(user.email, "Your OTP Code", `Your OTP is: ${otp}`);
+		await sendEmail(user.email, "Your Bingo OTP Code", otpEmailTemplate(otp));
 		success = true;
 
 		res.json({ message: "OTP sent to your email", success: success });
@@ -469,6 +472,147 @@ router.post("/change-avatar", fetchuser, async (req, res) => {
 		console.error(error);
 		res.status(500).json({ error: "Internal Server Error" });
 	}
+});
+
+//delete account
+router.delete("/delete-account", fetchuser, async (req, res) => {
+	try {
+		const userId = req.user.id;
+
+		const user = await User.findById(userId);
+
+		if (!user) {
+			return res.status(404).json({
+				success: false,
+				error: "User not found"
+			});
+		}
+
+		// Remove from friends lists
+		await User.updateMany(
+			{ friends: userId },
+			{ $pull: { friends: userId } }
+		);
+
+		// Remove pending requests
+		await User.updateMany(
+			{},
+			{
+				$pull: {
+					pendingRequests: userId,
+					sentRequests: userId
+				}
+			}
+		);
+
+		// Delete notifications
+		await Notification.deleteMany({
+			$or: [
+				{ user: userId },
+				{ sender: userId }
+			]
+		});
+
+		// Delete user
+		await User.findByIdAndDelete(userId);
+
+		res.json({
+			success: true,
+			message: "Account deleted successfully"
+		});
+
+	} catch (error) {
+		console.error(error);
+		res.status(500).json({
+			success: false,
+			error: "Internal Server Error"
+		});
+	}
+});
+
+//change name/bio
+router.post("/update-profile", fetchuser, async (req, res) => {
+	try {
+		const userId = req.user.id;
+
+		const { username, bio } = req.body;
+
+		const updateData = {};
+
+		if (username !== undefined) {
+			const existingUser = await User.findOne({
+				username,
+				_id: { $ne: userId }
+			});
+
+			if (existingUser) {
+				return res.status(400).json({
+					success: false,
+					error: "Username already taken"
+				});
+			}
+
+			updateData.username = username.trim();
+		}
+
+		if (bio !== undefined) {
+			updateData.bio = bio.trim();
+		}
+
+		const user = await User.findByIdAndUpdate(
+			userId,
+			{ $set: updateData },
+			{ new: true }
+		).select("-password");
+
+		res.json({
+			success: true,
+			user
+		});
+
+	} catch (error) {
+		console.error("Update profile error:", error);
+		res.status(500).json({
+			success: false,
+			error: "Internal Server Error"
+		});
+	}
+});
+
+//change password
+// Requires auth token. Verifies current password, then sets new password.
+router.put('/change-password', fetchuser, async (req, res) => {
+    const { currentPassword, newPassword } = req.body;
+ 
+    if (!currentPassword || !newPassword) {
+        return res.status(400).json({ success: false, error: "Both fields are required." });
+    }
+ 
+    if (newPassword.length < 6) {
+        return res.status(400).json({ success: false, error: "New password must be at least 6 characters." });
+    }
+ 
+    try {
+        const user = await User.findById(req.user.id);
+        if (!user) return res.status(404).json({ success: false, error: "User not found." });
+ 
+        const isMatch = await bcrypt.compare(currentPassword, user.password);
+        if (!isMatch) {
+            return res.status(400).json({ success: false, error: "Current password is incorrect." });
+        }
+ 
+        if (currentPassword === newPassword) {
+            return res.status(400).json({ success: false, error: "New password must be different from current password." });
+        }
+ 
+        user.password = await bcrypt.hash(newPassword, 10);
+        await user.save();
+ 
+        res.json({ success: true, message: "Password changed successfully." });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ success: false, error: "Internal Server Error." });
+    }
 });
 
 

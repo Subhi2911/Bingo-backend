@@ -1,114 +1,150 @@
-const router = require("express").Router();
+// routes/messages.js
+const router  = require("express").Router();
 const Message = require("../models/Messages");
-const Chat = require("../models/Chat");
+const Chat    = require("../models/Chat");
 const { encrypt, decrypt } = require("../utils/encryption");
 const Notification = require("../models/Notification");
 
-
-
-// get messages of a chat
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/messages/:chatId?page=1&limit=8
+//
+// Returns messages newest-first (for pagination prepend on frontend).
+// page=1 → the LATEST 8 messages
+// page=2 → the 8 before those, etc.
+// ─────────────────────────────────────────────────────────────────────────────
 router.get("/:chatId", async (req, res) => {
     try {
+        const page  = Math.max(1, parseInt(req.query.page)  || 1);
+        const limit = Math.max(1, parseInt(req.query.limit) || 8);
+        const skip  = (page - 1) * limit;
+
+        // Sort descending → newest first, then skip/limit, then re-sort ascending
+        // so the frontend just needs to reverse() once per page
         const messages = await Message.find({ chatId: req.params.chatId })
             .populate("sender", "username avatar")
-            .sort({ createdAt: 1 });
-        // Decrypt messages before sending to frontend
-        for (let i = 0; i < messages.length; i++) {
-            messages[i].text = decrypt(messages[i].text);
-        }
+            .sort({ createdAt: -1 })   // newest first for pagination
+            .skip(skip)
+            .limit(limit);
 
-        res.status(200).json(messages); // [] if none
+        // Decrypt
+        const decrypted = messages.map(m => ({
+            ...m.toObject(),
+            text: (() => {
+                try { return decrypt(m.text); }
+                catch { return m.text; }
+            })(),
+        }));
+
+        // Still newest-first; frontend reverses to get oldest-first display order
+        res.status(200).json(decrypted);
     } catch (err) {
-        res.status(500).json(err);
+        console.error("GET messages error:", err);
+        res.status(500).json({ message: "Failed to fetch messages" });
     }
 });
 
-
-
-// SEND MESSAGE
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/messages/
+// Send a new message
+// ─────────────────────────────────────────────────────────────────────────────
 router.post("/", async (req, res) => {
     try {
-        const io = req.app.get("io");
+        const io          = req.app.get("io");
         const onlineUsers = req.app.get("onlineUsers") || {};
-        console.log('huhu')
         const { chatId, sender, text, type } = req.body;
-        console.log(req.body);
+
         const encryptedText = encrypt(text);
 
         const message = new Message({
             chatId,
-            sender: sender,
+            sender,
             text: encryptedText,
-            type: type || ''
+            type: type || "",
+            seenBy: [sender],   // sender has always "seen" their own message
         });
+
+        // Update chat's lastMessage + lastRead for sender
         await Chat.findByIdAndUpdate(chatId, {
             lastMessage: message._id,
-            $set: {
-                "lastRead.$[elem].messageId": message._id
-            }
+            $set: { "lastRead.$[elem].messageId": message._id },
         }, {
-            arrayFilters: [{ "elem.userId": sender }]
+            arrayFilters: [{ "elem.userId": sender }],
         });
 
         const saved = await message.save();
         await saved.populate("sender", "username avatar");
 
-        // decrypt before sending to frontend
         const responseMessage = {
             ...saved.toObject(),
-            text: type === 'private_room_invite' ? saved.text : decrypt(saved.text),
+            text: type === "private_room_invite" ? saved.text : decrypt(saved.text),
         };
-        let roomCode, gameType, playerCount;
 
-
+        // ── Private room invite notification ──────────────────────────────
         if (type === "private_room_invite") {
-            const codeMatch = text.match(/Room Code:\s*(\w+)/);
-            const gameMatch = text.match(/GameType:\s*(.+)/);
-            const playerMatch = text.match(/Total Players:\s*(\d+)/);
+            const roomCode   = text.match(/Room Code:\s*(\w+)/)?.[1];
+            const gameType   = text.match(/GameType:\s*(.+)/)?.[1];
+            const playerCount = text.match(/Total Players:\s*(\d+)/)?.[1];
 
+            const chat     = await Chat.findById(chatId).populate("participants", "_id username");
+            const receiver = chat.participants.find(u => u._id.toString() !== sender);
 
-            roomCode = codeMatch?.[1];
-            gameType = gameMatch?.[1];
-            playerCount = playerMatch?.[1];
-        }
-        const chat = await Chat.findById(chatId).populate("participants", "_id username");
-        const receiver = chat.participants.find(
-            (u) => u._id.toString() !== sender
-        );
-        if (type === "private_room_invite") {
-            const notification = await Notification.create({
-                user: receiver._id,
-                title: type === 'private_room_invite' ? `Private Room Invite 🎮` : `New message from ${saved.sender.username}`,
-                body: `${saved.sender.username} invited you to a private room.`,
-                type: "PRIVATE_ROOM_INVITE",
-                data: {
-                    roomCode,
-                    gameType,
-                    playerCount,
-                    chatId,
-                },
-                read: false
+            if (receiver) {
+                const notification = await Notification.create({
+                    user: receiver._id,
+                    title: "Private Room Invite 🎮",
+                    body: `${saved.sender.username} invited you to a private room.`,
+                    type: "PRIVATE_ROOM_INVITE",
+                    data: { roomCode, gameType, playerCount, chatId },
+                    read: false,
+                });
 
-            });
-
-            // Emit to online user only (optional, for live update in drawer)
-            const receiverSocketId = onlineUsers[receiver._id];
-            if (receiverSocketId) {
-                io.to(receiverSocketId).emit("newNotification", notification);
-                console.log("✅ Notification emitted to online user", receiver._id);
-            } else {
-                console.log("⚠️ User offline, notification saved in DB:", receiver._id);
+                const receiverSocketId = onlineUsers[receiver._id.toString()];
+                if (receiverSocketId) {
+                    io.to(receiverSocketId).emit("newNotification", notification);
+                }
             }
         }
-        console.log("Message sent:", responseMessage);
-        res.status(201).json(responseMessage);
 
-        //console.log(res);
+        res.status(201).json(responseMessage);
     } catch (err) {
-        res.status(500).json(err);
-        console.log(err);
+        console.error("POST message error:", err);
+        res.status(500).json({ message: "Failed to send message" });
     }
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/messages/seen
+// Mark a message as seen by a user
+// Body: { messageId, userId, chatId }
+// ─────────────────────────────────────────────────────────────────────────────
+router.post("/seen", async (req, res) => {
+    try {
+        const { messageId, userId, chatId } = req.body;
+        if (!messageId || !userId) return res.status(400).json({ message: "Missing fields" });
+
+        // $addToSet prevents duplicate userId entries in seenBy
+        const updated = await Message.findByIdAndUpdate(
+            messageId,
+            { $addToSet: { seenBy: userId } },
+            { new: true }
+        );
+
+        if (!updated) return res.status(404).json({ message: "Message not found" });
+
+        // Update chat lastRead for this user
+        if (chatId) {
+            await Chat.findByIdAndUpdate(chatId, {
+                $set: { "lastRead.$[elem].messageId": messageId },
+            }, {
+                arrayFilters: [{ "elem.userId": userId }],
+            });
+        }
+
+        res.status(200).json({ success: true, seenBy: updated.seenBy });
+    } catch (err) {
+        console.error("POST seen error:", err);
+        res.status(500).json({ message: "Failed to mark as seen" });
+    }
+});
 
 module.exports = router;

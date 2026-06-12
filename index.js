@@ -46,8 +46,17 @@ const POWER_GROUPS = {
   IMMUNITY: ["Loyal Guard", "Iron Hide", "Steadfast"],
   REMOVE_MARK: ["Silent Claws", "Ambush Pounce", "Sneak Bite", "Sticky Tongue", "Egg Bomb", "Ground Slam"],
   REFLECT: ["Nine Lives", "Poison Skin", "Feather Shield", "Tiny Target"],
-  NOT_IMPLEMENTED: ["Mischief Steal", "King's Roar", "Predator Focus", "Illusion Clone",
-    "Trick Swap", "Mind Games", "Quick Escape", "Coil Trap", "Heat Sense"],
+  MISCHIEF_STEAL: ["Mischief Steal"],
+  KINGS_ROAR: ["King's Roar"],
+  PREDATOR_FOCUS: ["Predator Focus"],
+  ILLUSION_CLONE: ["Illusion Clone"],
+  TRICK_SWAP: ["Trick Swap"],
+  MIND_GAMES: ["Mind Games"],
+  QUICK_ESCAPE: ["Quick Escape"],
+  COIL_TRAP: ["Coil Trap"],
+  HEAT_SENSE: ["Heat Sense"],
+  ENDURANCE: ["Endurance"],
+  NOT_IMPLEMENTED: [],
 };
 
 const getPowerGroup = (power) => {
@@ -111,6 +120,8 @@ const turnTimers = {}; // roomCode -> timeoutId
 
 // socket.id -> chatId
 
+
+
 function startTurnTimer(roomCode) {
   const game = games[roomCode];
 
@@ -121,6 +132,17 @@ function startTurnTimer(roomCode) {
   clearTimeout(turnTimers[roomCode]);
 
   const currentPlayer = game.turns[game.currentTurn];
+
+  // KING'S ROAR skip check
+  const currentEffect = game.effects?.[currentPlayer.userId];
+  if (currentEffect?.skipNextTurn) {
+    delete game.effects[currentPlayer.userId].skipNextTurn;
+    io.to(roomCode).emit("turn_skipped", { userId: currentPlayer.userId, message: `👑 ${currentPlayer.username || "Player"}'s turn was skipped!` });
+    game.currentTurn = (game.currentTurn + 1) % game.turns.length;
+    io.to(roomCode).emit("current_turn", game.turns[game.currentTurn]);
+    startTurnTimer(roomCode);
+    return;
+  }
 
   const availableNumbers = Array.from(
     { length: 25 },
@@ -143,10 +165,13 @@ function startTurnTimer(roomCode) {
     GAME_RULES[game.gameType]?.TURN_TIME || 15;
 
   // AFK penalty after 3 missed turns
-  const turnTime =
-    misses >= 3
-      ? Math.min(5, defaultTurnTime)
-      : defaultTurnTime;
+  const baseTurnTime = misses >= 3 ? Math.min(5, defaultTurnTime) : defaultTurnTime;
+  const enduranceTurns = game.effects?.[currentPlayer.userId]?.enduranceTurns || 0;
+  if (enduranceTurns > 0) {
+    game.effects[currentPlayer.userId].enduranceTurns--;
+    io.to(roomCode).emit('endurance_active', { userId: currentPlayer.userId, remainingTurns: game.effects[currentPlayer.userId].enduranceTurns });
+  }
+  const turnTime = enduranceTurns > 0 ? baseTurnTime * 3 : baseTurnTime;
 
   // Handle frozen player
   const effect = game.effects?.[currentPlayer.userId];
@@ -166,6 +191,7 @@ function startTurnTimer(roomCode) {
     startTurnTimer(roomCode);
     return;
   }
+
 
   turnTimers[roomCode] = setTimeout(() => {
     const randomNumber =
@@ -242,218 +268,434 @@ function handleUsePower(socket, io, { roomCode, userId, power, group, targetId, 
   if (!resolvedGroup)
     return socket.emit("power_failed", { reason: "Unknown power" });
 
-  // ── NOT_IMPLEMENTED placeholder ──────────
-  if (resolvedGroup === "NOT_IMPLEMENTED") {
-    game.powerUsed[userId] = true;
-    socket.emit("power_not_implemented", { power });
-    return;
-  }
-
   // ── Helper: apply negative effect with immunity / reflect checks ──
-  const applyNegativeEffect = (effFn, reflectFn) => {
-    if (!targetId) return socket.emit("power_failed", { reason: "No target selected" });
+  const applyNegativeEffect = (effFn, overrideTargetId) => {
+    const tid = overrideTargetId || targetId;
+    if (!tid) return socket.emit("power_failed", { reason: "No target selected" });
 
-    const targetEffect = game.effects[targetId] || {};
+    const targetEffect = game.effects[tid] || {};
 
-    // IMMUNITY check
     if (targetEffect.immuneUntil && targetEffect.immuneUntil > Date.now()) {
       socket.emit("power_failed", { reason: "Target is immune" });
       return false;
     }
 
-    // REFLECT check
     if (targetEffect.reflectNext) {
-      game.effects[targetId].reflectNext = false;
-      // Reflect back onto caster
+      game.effects[tid].reflectNext = false;
       effFn(userId);
-      io.to(roomCode).emit("power_reflected", {
-        power,
-        reflectedFrom: targetId,
-        reflectedTo: userId,
-      });
+      io.to(roomCode).emit("power_reflected", { power, reflectedFrom: tid, reflectedTo: userId });
       game.powerUsed[userId] = true;
       io.to(roomCode).emit("power_used", {
         power, userId, group: resolvedGroup,
         message: `↩ ${power} reflected back on user!`,
       });
-      return false; // signal that reflect happened
+      return false;
     }
 
-    // Normal application
-    effFn(targetId);
+    effFn(tid);
     return true;
   };
 
-  // ── GROUP HANDLERS ────────────────────────
+  // ─────────────────────────────────────────────────────────────────────────
+  // EXISTING GROUPS (unchanged)
+  // ─────────────────────────────────────────────────────────────────────────
 
-  // GROUP 1 — EXTRA TURN
   if (resolvedGroup === "EXTRA_TURN") {
     const playerIndex = game.turns.findIndex(p => p.userId === userId);
     if (playerIndex === -1) return socket.emit("power_failed", { reason: "Player not found" });
-
     clearTimeout(turnTimers[roomCode]);
     game.currentTurn = playerIndex;
     game.powerUsed[userId] = true;
-
     io.to(roomCode).emit("current_turn", game.turns[game.currentTurn]);
     io.to(roomCode).emit("extra_turn", { playerId: userId });
-    io.to(roomCode).emit("power_used", {
-      power, userId, group: resolvedGroup,
-      message: `⚡ ${power} — extra turn granted!`,
-    });
+    io.to(roomCode).emit("power_used", { power, userId, group: resolvedGroup, message: `⚡ ${power} — extra turn granted!` });
     startTurnTimer(roomCode);
     return;
   }
 
-  // GROUP 2 — FREE MARK
   if (resolvedGroup === "FREE_MARK") {
     if (number === undefined || number === null)
       return socket.emit("power_failed", { reason: "No number selected" });
-
     if (game.picked.includes(number))
       return socket.emit("power_failed", { reason: "Number already picked" });
-
     game.picked.push(number);
     if (!game.playerMarkedNumbers[userId]) game.playerMarkedNumbers[userId] = [];
     game.playerMarkedNumbers[userId].push(number);
     game.powerUsed[userId] = true;
-
-    Room.updateOne({ code: roomCode }, { $addToSet: { selected: number } }).catch(console.error);
-
+    require("./models/Room").updateOne({ code: roomCode }, { $addToSet: { selected: number } }).catch(console.error);
     io.to(roomCode).emit("number_picked", game.picked);
-    io.to(roomCode).emit("power_used", {
-      power, userId, group: resolvedGroup,
-      message: `👣 ${power} — free mark on ${number}!`,
-    });
+    io.to(roomCode).emit("power_used", { power, userId, group: resolvedGroup, message: `👣 ${power} — free mark on ${number}!` });
     return;
   }
 
-  // GROUP 3 — RANDOM MARK
   if (resolvedGroup === "RANDOM_MARK") {
-    // Find player's unmarked numbers (numbers 1-25, not yet picked)
-    const allUnpicked = Array.from({ length: 25 }, (_, i) => i + 1)
-      .filter(n => !game.picked.includes(n));
-
+    const allUnpicked = Array.from({ length: 25 }, (_, i) => i + 1).filter(n => !game.picked.includes(n));
     if (!allUnpicked.length)
       return socket.emit("power_failed", { reason: "No numbers left to mark" });
-
     const randomNum = allUnpicked[Math.floor(Math.random() * allUnpicked.length)];
     game.picked.push(randomNum);
     if (!game.playerMarkedNumbers[userId]) game.playerMarkedNumbers[userId] = [];
     game.playerMarkedNumbers[userId].push(randomNum);
     game.powerUsed[userId] = true;
-
-    Room.updateOne({ code: roomCode }, { $addToSet: { selected: randomNum } }).catch(console.error);
-
+    require("./models/Room").updateOne({ code: roomCode }, { $addToSet: { selected: randomNum } }).catch(console.error);
     io.to(roomCode).emit("number_picked", game.picked);
-    io.to(roomCode).emit("power_used", {
-      power, userId, group: resolvedGroup,
-      message: `🎲 ${power} — random mark on ${randomNum}!`,
-    });
+    io.to(roomCode).emit("power_used", { power, userId, group: resolvedGroup, message: `🎲 ${power} — random mark on ${randomNum}!` });
     return;
   }
 
-  // GROUP 4 — FREEZE
   if (resolvedGroup === "FREEZE") {
-    const applied = applyNegativeEffect(
-      (tid) => {
-        const frozenUntil = Date.now() + 5000;
-        if (!game.effects[tid]) game.effects[tid] = {};
-        game.effects[tid].frozenUntil = frozenUntil;
-
-        // Find target username
-        const targetPlayer = game.turns.find(p => p.userId === tid);
-
-        io.to(roomCode).emit("player_frozen", {
-          targetId: tid,
-          frozenUntil,
-          message: `❄ ${power} froze ${targetPlayer?.username || "a player"} for 5s`,
-        });
-        io.to(roomCode).emit("power_effect", {
-          effect: "frozenUntil", targetId: tid, value: frozenUntil,
-        });
-      }
-    );
+    const applied = applyNegativeEffect((tid) => {
+      const frozenUntil = Date.now() + 5000;
+      if (!game.effects[tid]) game.effects[tid] = {};
+      game.effects[tid].frozenUntil = frozenUntil;
+      const targetPlayer = game.turns.find(p => p.userId === tid);
+      io.to(roomCode).emit("player_frozen", { targetId: tid, frozenUntil, message: `❄ ${power} froze ${targetPlayer?.username || "a player"} for 5s` });
+      io.to(roomCode).emit("power_effect", { effect: "frozenUntil", targetId: tid, value: frozenUntil });
+    });
     if (applied !== false) {
       game.powerUsed[userId] = true;
-      io.to(roomCode).emit("power_used", {
-        power, userId, group: resolvedGroup,
-        message: `❄ ${power} activated`,
-      });
+      io.to(roomCode).emit("power_used", { power, userId, group: resolvedGroup, message: `❄ ${power} activated` });
     }
     return;
   }
 
-  // GROUP 5 — IMMUNITY
   if (resolvedGroup === "IMMUNITY") {
     const immuneUntil = Date.now() + 15000;
     if (!game.effects[userId]) game.effects[userId] = {};
     game.effects[userId].immuneUntil = immuneUntil;
     game.powerUsed[userId] = true;
-
-    io.to(roomCode).emit("player_immune", {
-      userId,
-      immuneUntil,
-      message: `🛡 ${power} — immune for 15s!`,
-    });
-    io.to(roomCode).emit("power_effect", {
-      effect: "immuneUntil", targetId: userId, value: immuneUntil,
-    });
-    io.to(roomCode).emit("power_used", {
-      power, userId, group: resolvedGroup,
-      message: `🛡 ${power} activated`,
-    });
+    io.to(roomCode).emit("player_immune", { userId, immuneUntil, message: `🛡 ${power} — immune for 15s!` });
+    io.to(roomCode).emit("power_effect", { effect: "immuneUntil", targetId: userId, value: immuneUntil });
+    io.to(roomCode).emit("power_used", { power, userId, group: resolvedGroup, message: `🛡 ${power} activated` });
     return;
   }
 
-  // GROUP 6 — REMOVE MARK
   if (resolvedGroup === "REMOVE_MARK") {
-    const applied = applyNegativeEffect(
-      (tid) => {
-        const markedByTarget = game.playerMarkedNumbers[tid];
-        if (!markedByTarget || !markedByTarget.length) {
-          socket.emit("power_failed", { reason: "Target has no marked numbers" });
-          return;
-        }
-
-        // Remove latest marked number
-        const removedNumber = markedByTarget.pop();
-        const idx = game.picked.lastIndexOf(removedNumber);
-        if (idx !== -1) game.picked.splice(idx, 1);
-
-        Room.updateOne({ code: roomCode }, { $pull: { selected: removedNumber } }).catch(console.error);
-
-        io.to(roomCode).emit("number_picked", game.picked);
-        io.to(roomCode).emit("mark_removed", {
-          targetId: tid,
-          number: removedNumber,
-        });
-
-        const targetPlayer = game.turns.find(p => p.userId === tid);
-        io.to(roomCode).emit("power_used", {
-          power, userId, group: resolvedGroup,
-          message: `💥 ${power} removed ${targetPlayer?.username || "a player"}'s mark`,
-        });
+    const applied = applyNegativeEffect((tid) => {
+      const markedByTarget = game.playerMarkedNumbers[tid];
+      if (!markedByTarget || !markedByTarget.length) {
+        socket.emit("power_failed", { reason: "Target has no marked numbers" });
+        return;
       }
-    );
+      const removedNumber = markedByTarget.pop();
+      const idx = game.picked.lastIndexOf(removedNumber);
+      if (idx !== -1) game.picked.splice(idx, 1);
+      require("./models/Room").updateOne({ code: roomCode }, { $pull: { selected: removedNumber } }).catch(console.error);
+      io.to(roomCode).emit("number_picked", game.picked);
+      io.to(roomCode).emit("mark_removed", { targetId: tid, number: removedNumber });
+      const targetPlayer = game.turns.find(p => p.userId === tid);
+      io.to(roomCode).emit("power_used", { power, userId, group: resolvedGroup, message: `💥 ${power} removed ${targetPlayer?.username || "a player"}'s mark` });
+    });
     if (applied !== false) {
       game.powerUsed[userId] = true;
     }
     return;
   }
 
-  // GROUP 7 — REFLECT / SHIELD
   if (resolvedGroup === "REFLECT") {
     if (!game.effects[userId]) game.effects[userId] = {};
     game.effects[userId].reflectNext = true;
     game.powerUsed[userId] = true;
+    io.to(roomCode).emit("power_effect", { effect: "reflectNext", targetId: userId, value: true });
+    io.to(roomCode).emit("power_used", { power, userId, group: resolvedGroup, message: `↩ ${power} — next attack will be reflected!` });
+    return;
+  }
 
-    io.to(roomCode).emit("power_effect", {
-      effect: "reflectNext", targetId: userId, value: true,
+  // ── MISCHIEF STEAL ───────────────────────────────────────────────────────
+  // Steal the target's most recently marked number and add it to your own marks.
+  if (power === "Mischief Steal") {
+    if (!targetId) return socket.emit("power_failed", { reason: "No target selected" });
+
+    const targetEffect = game.effects[targetId] || {};
+    if (targetEffect.immuneUntil && targetEffect.immuneUntil > Date.now())
+      return socket.emit("power_failed", { reason: "Target is immune" });
+
+    if (targetEffect.reflectNext) {
+      game.effects[targetId].reflectNext = false;
+      // Reflect: steal from the caster instead (undo their last mark)
+      const myMarked = game.playerMarkedNumbers[userId] || [];
+      if (myMarked.length) {
+        const stolen = myMarked.pop();
+        const idx = game.picked.lastIndexOf(stolen);
+        if (idx !== -1) game.picked.splice(idx, 1);
+        require("./models/Room").updateOne({ code: roomCode }, { $pull: { selected: stolen } }).catch(console.error);
+        io.to(roomCode).emit("number_picked", game.picked);
+        io.to(roomCode).emit("mark_removed", { targetId: userId, number: stolen });
+      }
+      game.powerUsed[userId] = true;
+      io.to(roomCode).emit("power_reflected", { power, reflectedFrom: targetId, reflectedTo: userId });
+      io.to(roomCode).emit("power_used", { power, userId, group: resolvedGroup, message: `↩ Mischief Steal reflected!` });
+      return;
+    }
+
+    const markedByTarget = game.playerMarkedNumbers[targetId] || [];
+    if (!markedByTarget.length)
+      return socket.emit("power_failed", { reason: "Target has no marked numbers to steal" });
+
+    // Remove from target, give to caster
+    const stolenNumber = markedByTarget.pop();
+    if (!game.playerMarkedNumbers[userId]) game.playerMarkedNumbers[userId] = [];
+    game.playerMarkedNumbers[userId].push(stolenNumber);
+    // picked list stays the same (the number is still marked, just ownership changed)
+
+    game.powerUsed[userId] = true;
+
+    const targetPlayer = game.turns.find(p => p.userId === targetId);
+    const casterPlayer = game.turns.find(p => p.userId === userId);
+
+    // Tell the target their mark was stolen
+    io.to(roomCode).emit("mark_removed", { targetId, number: stolenNumber });
+    // Tell caster the number is now theirs (re-add as their mark)
+    io.to(roomCode).emit("mark_stolen", {
+      fromId: targetId,
+      toId: userId,
+      number: stolenNumber,
+      message: `🃏 ${casterPlayer?.username || "Someone"} stole ${stolenNumber} from ${targetPlayer?.username || "a player"}!`,
     });
     io.to(roomCode).emit("power_used", {
-      power, userId, group: resolvedGroup,
-      message: `↩ ${power} — next attack will be reflected!`,
+      power, userId, group: "MISCHIEF_STEAL",
+      message: `🃏 Mischief Steal — swiped ${stolenNumber} from ${targetPlayer?.username || "a player"}!`,
+    });
+    return;
+  }
+
+  // ── KING'S ROAR ──────────────────────────────────────────────────────────
+  // Skip the next player in turn order (they lose their upcoming turn).
+  if (power === "King's Roar") {
+    const nextTurnIndex = (game.currentTurn + 1) % game.turns.length;
+    const skippedPlayer = game.turns[nextTurnIndex];
+
+    if (!skippedPlayer || skippedPlayer.userId === userId) {
+      // Only one player left to affect — skip self is meaningless
+      return socket.emit("power_failed", { reason: "No valid player to skip" });
+    }
+
+    // Mark that player as having their turn skipped once
+    if (!game.effects[skippedPlayer.userId]) game.effects[skippedPlayer.userId] = {};
+    game.effects[skippedPlayer.userId].skipNextTurn = true;
+
+    game.powerUsed[userId] = true;
+
+    io.to(roomCode).emit("power_effect", { effect: "skipNextTurn", targetId: skippedPlayer.userId, value: true });
+    io.to(roomCode).emit("power_used", {
+      power, userId, group: "KINGS_ROAR",
+      message: `👑 King's Roar — ${skippedPlayer.username || "next player"}'s turn will be skipped!`,
+    });
+    return;
+  }
+
+  // ── PREDATOR FOCUS ───────────────────────────────────────────────────────
+  // Reveal all opponents' boards to the caster for 6 seconds.
+  if (power === "Predator Focus") {
+    const opponents = game.turns.filter(p => p.userId !== userId);
+    const boardReveal = opponents.map(p => ({
+      userId: p.userId,
+      username: p.username,
+      avatar: p.avatar,
+      markedNumbers: game.playerMarkedNumbers[p.userId] || [],
+    }));
+
+    game.powerUsed[userId] = true;
+
+    // Only emit to the caster's socket
+    socket.emit("predator_focus_reveal", {
+      boards: boardReveal,
+      duration: 6000,
+      message: "👁 Predator Focus — opponent boards revealed for 6s!",
+    });
+    io.to(roomCode).emit("power_used", {
+      power, userId, group: "PREDATOR_FOCUS",
+      message: `👁 ${game.turns.find(p => p.userId === userId)?.username || "A player"} used Predator Focus!`,
+    });
+    return;
+  }
+
+  // ── ILLUSION CLONE ───────────────────────────────────────────────────────
+  // Makes opponents see a fake extra BINGO letter on caster's display for 5s.
+  if (power === "Illusion Clone") {
+    game.powerUsed[userId] = true;
+    const fakeLetter = ["B", "I", "N", "G", "O"][Math.floor(Math.random() * 5)];
+
+    io.to(roomCode).emit("illusion_clone", {
+      userId,
+      fakeLetter,
+      duration: 5000,
+      message: `🌀 Illusion Clone activated by ${game.turns.find(p => p.userId === userId)?.username || "a player"}!`,
+    });
+    io.to(roomCode).emit("power_used", {
+      power, userId, group: "ILLUSION_CLONE",
+      message: `🌀 Illusion Clone — opponents see a false BINGO letter!`,
+    });
+    return;
+  }
+
+  // ── TRICK SWAP ───────────────────────────────────────────────────────────
+  // Swap one random marked number between caster and target
+  // (changes ownership in playerMarkedNumbers without altering picked list).
+  if (power === "Trick Swap") {
+    if (!targetId) return socket.emit("power_failed", { reason: "No target selected" });
+
+    const targetEffect = game.effects[targetId] || {};
+    if (targetEffect.immuneUntil && targetEffect.immuneUntil > Date.now())
+      return socket.emit("power_failed", { reason: "Target is immune" });
+
+    const myMarked = game.playerMarkedNumbers[userId] || [];
+    const theirMarked = game.playerMarkedNumbers[targetId] || [];
+
+    if (!myMarked.length || !theirMarked.length)
+      return socket.emit("power_failed", { reason: "Both players need at least one marked number" });
+
+    const myNum = myMarked[Math.floor(Math.random() * myMarked.length)];
+    const theirNum = theirMarked[Math.floor(Math.random() * theirMarked.length)];
+
+    // Swap in arrays
+    const myIdx = myMarked.indexOf(myNum);
+    const theirIdx = theirMarked.indexOf(theirNum);
+    game.playerMarkedNumbers[userId][myIdx] = theirNum;
+    game.playerMarkedNumbers[targetId][theirIdx] = myNum;
+
+    game.powerUsed[userId] = true;
+
+    const targetPlayer = game.turns.find(p => p.userId === targetId);
+    io.to(roomCode).emit("trick_swap", {
+      userId,
+      targetId,
+      myNum,
+      theirNum,
+      message: `🔀 Trick Swap — ${myNum} ↔ ${theirNum} swapped with ${targetPlayer?.username || "opponent"}!`,
+    });
+    io.to(roomCode).emit("power_used", {
+      power, userId, group: "TRICK_SWAP",
+      message: `🔀 Trick Swap — board numbers swapped!`,
+    });
+    return;
+  }
+
+  // ── MIND GAMES ───────────────────────────────────────────────────────────
+  // Shuffles the visual display of the target's board for 8 seconds.
+  // Numbers are the same; only the display order scrambles client-side.
+  if (power === "Mind Games") {
+    if (!targetId) return socket.emit("power_failed", { reason: "No target selected" });
+
+    const targetEffect = game.effects[targetId] || {};
+    if (targetEffect.immuneUntil && targetEffect.immuneUntil > Date.now())
+      return socket.emit("power_failed", { reason: "Target is immune" });
+
+    game.powerUsed[userId] = true;
+
+    // Generate a stable shuffle seed so all clients agree (not needed since
+    // only the target's client shuffles, but we send duration + seed)
+    const shuffleSeed = Math.floor(Math.random() * 100000);
+    io.to(roomCode).emit("mind_games", {
+      targetId,
+      shuffleSeed,
+      duration: 8000,
+      message: `🌀 Mind Games — target's board is scrambled for 8s!`,
+    });
+    io.to(roomCode).emit("power_used", {
+      power, userId, group: "MIND_GAMES",
+      message: `🌀 Mind Games activated!`,
+    });
+    return;
+  }
+
+  // ── QUICK ESCAPE ─────────────────────────────────────────────────────────
+  // Undo the caster's most recent manually-marked number (remove from picked).
+  if (power === "Quick Escape") {
+    const myMarked = game.playerMarkedNumbers[userId] || [];
+    if (!myMarked.length)
+      return socket.emit("power_failed", { reason: "You have no marks to undo" });
+
+    const undoneNumber = myMarked.pop();
+    const idx = game.picked.lastIndexOf(undoneNumber);
+    if (idx !== -1) game.picked.splice(idx, 1);
+
+    require("./models/Room").updateOne({ code: roomCode }, { $pull: { selected: undoneNumber } }).catch(console.error);
+
+    game.powerUsed[userId] = true;
+
+    io.to(roomCode).emit("number_picked", game.picked);
+    io.to(roomCode).emit("mark_removed", { targetId: userId, number: undoneNumber });
+    io.to(roomCode).emit("power_used", {
+      power, userId, group: "QUICK_ESCAPE",
+      message: `💨 Quick Escape — ${undoneNumber} unmarked!`,
+    });
+    return;
+  }
+
+  // ── COIL TRAP ────────────────────────────────────────────────────────────
+  // The NEXT number any opponent marks is immediately removed from their board.
+  if (power === "Coil Trap") {
+    if (!game.coilTraps) game.coilTraps = {};
+
+    // Set a trap that triggers once for any non-caster pick
+    game.coilTraps[userId] = {
+      setCasterId: userId,
+      active: true,
+    };
+
+    game.powerUsed[userId] = true;
+
+    io.to(roomCode).emit("power_effect", { effect: "coilTrap", targetId: userId, value: true });
+    io.to(roomCode).emit("power_used", {
+      power, userId, group: "COIL_TRAP",
+      message: `🐍 Coil Trap set — the next opponent to mark a number will lose it!`,
+    });
+    return;
+  }
+
+  // ── HEAT SENSE ───────────────────────────────────────────────────────────
+  // Shows the caster which numbers opponents need most to complete a line.
+  if (power === "Heat Sense") {
+    // Build a frequency map: for each unpicked number, how many opponent
+    // winning lines does it complete or contribute to?
+    const opponents = game.turns.filter(p => p.userId !== userId);
+    const unpicked = Array.from({ length: 25 }, (_, i) => i + 1).filter(n => !game.picked.includes(n));
+
+    // We don't store boards server-side (boards are generated client-side),
+    // so we use playerMarkedNumbers as a proxy for "numbers they want".
+    // Count how many opponents still need each number (haven't marked it).
+    const numberHeat = {};
+    unpicked.forEach(n => {
+      numberHeat[n] = 0;
+      opponents.forEach(opp => {
+        const marked = game.playerMarkedNumbers[opp.userId] || [];
+        if (!marked.includes(n)) numberHeat[n]++;
+      });
+    });
+
+    // Sort by highest demand
+    const hotNumbers = Object.entries(numberHeat)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([num, count]) => ({ number: parseInt(num), opponentCount: count }));
+
+    game.powerUsed[userId] = true;
+
+    // Only send to caster
+    socket.emit("heat_sense_result", {
+      hotNumbers,
+      duration: 8000,
+      message: "🔥 Heat Sense — most-wanted numbers revealed!",
+    });
+    io.to(roomCode).emit("power_used", {
+      power, userId, group: "HEAT_SENSE",
+      message: `🔥 ${game.turns.find(p => p.userId === userId)?.username || "A player"} used Heat Sense!`,
+    });
+    return;
+  }
+
+  // power== endurance 
+  if (power === 'Endurance') {
+    if (!game.effects[userId]) game.effects[userId] = {};
+    // Mark that this player gets 3x the turn time for their next 3 turns
+    game.effects[userId].enduranceTurns = 3;
+    game.powerUsed[userId] = true;
+
+    io.to(roomCode).emit('power_effect', { effect: 'enduranceTurns', targetId: userId, value: 3 });
+    io.to(roomCode).emit('power_used', {
+      power, userId, group: 'ENDURANCE',
+      message: `🐴 Endurance — next 3 turns get extended time!`,
     });
     return;
   }
@@ -582,6 +824,27 @@ io.on("connection", (socket) => {
       return;
     }
 
+    // COIL TRAP check — if any opponent has set a trap, trigger it on this pick
+    if (game.coilTraps) {
+      for (const [casterId, trap] of Object.entries(game.coilTraps)) {
+        if (trap.active && casterId !== current.userId) {
+          // Trap fires: remove the number we just tried to add
+          delete game.coilTraps[casterId];
+          io.to(roomCode).emit("coil_trap_triggered", {
+            victimId: current.userId,
+            number,
+            casterId,
+            message: `🐍 Coil Trap! ${current.username || "Player"}'s mark on ${number} was destroyed!`,
+          });
+          // Advance turn without counting the pick
+          game.currentTurn = (game.currentTurn + 1) % game.turns.length;
+          io.to(roomCode).emit("current_turn", game.turns[game.currentTurn]);
+          if (game.status !== "ended") startTurnTimer(roomCode);
+          return;
+        }
+      }
+    }
+
     clearTimeout(turnTimers[roomCode]);
 
     if (!game.picked.includes(number)) {
@@ -615,6 +878,40 @@ io.on("connection", (socket) => {
   });
 
   // ─────────────────────────────────────────
+  // Rejoin game
+  // ─────────────────────────────────────────
+
+  // ─── ADD THIS: Check if user has an ongoing game they can rejoin ───────────
+  socket.on("check_rejoin", ({ userId }) => {
+    for (const [roomCode, game] of Object.entries(games)) {
+      if (game.status !== "playing") continue;
+      const player = game.players.find(p => p.userId === userId);
+      if (!player) continue;
+
+      // Found an active game — update socket and notify client
+      player.socketId = socket.id;
+      player.disconnected = false;
+      socketUserMap[socket.id] = userId;
+      socket.join(roomCode);
+
+      socket.emit("rejoin_available", {
+        roomCode,
+        gameType: game.gameType,
+        players: game.players,
+        pickedNumbers: game.picked,
+        currentTurn: game.turns[game.currentTurn],
+        turnOrder: game.turns,
+      });
+
+      io.to(roomCode).emit("update_players", game.players);
+      console.log(`🔄 ${userId} rejoined room ${roomCode}`);
+      return;
+    }
+    // No active game found
+    socket.emit("no_rejoin_available");
+  });
+
+  // ─────────────────────────────────────────
   // GAME END
   // ─────────────────────────────────────────
   socket.on("game_end", async ({ roomCode, winnerId, gameType }) => {
@@ -631,25 +928,36 @@ io.on("connection", (socket) => {
       losers: losers.map(l => l.userId),
     });
 
-    const winner = game.players.find(p => p.userId === winnerId);
-    const user = await User.findById(winner.userId);
-
-    if (!user.wins || user.wins.length === 0) {
-      user.wins = {
-        classic: 0,
-        fast: 0,
-        power: 0,
-        private: 0,
-      };
+    // ── GUARD: don't save if all players are disconnected (ghost game) ──
+    const anyConnected = game.players.some(p => !p.disconnected);
+    if (!anyConnected) {
+      console.log(`🗑️ Room ${roomCode} ended with all players disconnected — not saving.`);
+      delete games[roomCode];
+      return;
     }
 
-    user.wins.gameType += 1; // or fast/power/private
-
-    await user.save();
-
+    const winner = game.players.find(p => p.userId === winnerId);
     if (!winner) {
       console.error(`Winner not found for room ${roomCode}.`);
       return;
+    }
+
+    try {
+      const user = await User.findById(winner.userId);
+      if (user) {
+        if (!user.wins || typeof user.wins !== "object") {
+          user.wins = { classic: 0, fast: 0, power: 0, private: 0 };
+        }
+        // Fix the original bug: was `user.wins.gameType` (always undefined)
+        if (user.wins[gameType] !== undefined) {
+          user.wins[gameType] += 1;
+        } else {
+          user.wins.power = (user.wins.power || 0) + 1; // fallback
+        }
+        await user.save();
+      }
+    } catch (err) {
+      console.error("Failed to update winner stats:", err);
     }
 
     try {
@@ -658,7 +966,11 @@ io.on("connection", (socket) => {
         {
           $set: {
             status: "ended",
-            winner: { userId: winner.userId, username: winner.username, avatar: winner.avatar },
+            winner: {
+              userId: winner.userId,
+              username: winner.username,
+              avatar: winner.avatar,
+            },
           },
         }
       );
@@ -681,9 +993,10 @@ io.on("connection", (socket) => {
     game.powerUsed = {};
     game.effects = {};
     game.playerMarkedNumbers = {};
+    game.coilTraps = {};         // ← ADD THIS
     game.turns = [...game.players].sort(() => Math.random() - 0.5);
     game.currentTurn = 0;
-    game.missedTurns = 0;
+    game.missedTurns = {};       // ← also fix: was 0, should be {} (object not number)
     io.to(roomCode).emit("restart_game", { turns: game.turns, currentTurn: game.turns[0] });
     startTurnTimer(roomCode);
   }
@@ -986,6 +1299,11 @@ io.on("connection", (socket) => {
     io.to(roomCode).emit("receive_message", { username, text, time: new Date().toISOString() });
   });
 
+  socket.on("mark_seen", ({ messageId, chatId, seenBy }) => {
+    // Relay to everyone else in the chat room so their double-tick updates live
+    socket.to(chatId).emit("message_seen", { messageId, seenBy });
+  });
+
   //______________________________________________
   // NOTIFICATIONS
   //______________________________________________
@@ -1058,6 +1376,15 @@ io.on("connection", (socket) => {
       if (game.status === "playing") {
         player.disconnected = true;
         io.to(roomCode).emit("update_players", game.players);
+        const allGone = game.players.every(p => p.disconnected);
+        if (allGone) {
+          // No one is watching — clean up without saving
+          clearTimeout(turnTimers[roomCode]);
+          delete turnTimers[roomCode];
+          delete games[roomCode];
+          await Room.deleteOne({ code: roomCode }).catch(console.error);
+          console.log(`🗑️ Room ${roomCode} deleted — all players disconnected.`);
+        }
       } else if (game.status === "waiting") {
         game.players = game.players.filter(p => p.userId !== userId);
         game.turns = game.turns.filter(p => p.userId !== userId);
