@@ -7,12 +7,17 @@ const emailApi = new SibApiV3Sdk.TransactionalEmailsApi();
 
 async function sendEmail(to, subject, html) {
     console.log("Sending email to", to);
-    await emailApi.sendTransacEmail({
-        sender: { name: 'BingoBing', email: process.env.BREVO_SENDER_EMAIL },
-        to: [{ email: to }],
-        subject,
-        htmlContent: html
-    });
+    try {
+        const result = await emailApi.sendTransacEmail({
+            sender: { name: 'BingoBing', email: process.env.BREVO_SENDER_EMAIL },
+            to: [{ email: to }],
+            subject,
+            htmlContent: html
+        });
+        console.log("Email sent successfully:", result); // will show messageId if OK
+    } catch (err) {
+        console.error("Brevo error:", err?.response?.body || err.message);
+    }
 }
 
 module.exports = sendEmail;
