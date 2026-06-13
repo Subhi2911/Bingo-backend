@@ -8,8 +8,7 @@ async function sendEmail(to, subject, text) {
             pass: process.env.EMAIL_PASS
         }
     });
-    console.log(process.env.EMAIL_USER, process.env.EMAIL_PASS)
-
+    
     await transporter.sendMail({
         from: '"BingoBing" <noreply@bingobing.com>',
         to,
