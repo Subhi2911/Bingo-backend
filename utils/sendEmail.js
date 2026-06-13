@@ -1,9 +1,9 @@
-const Brevo = require('@getbrevo/brevo');
+const SibApiV3Sdk = require('sib-api-v3-sdk');
 
-const client = Brevo.ApiClient.instance;
+const client = SibApiV3Sdk.ApiClient.instance;
 client.authentications['api-key'].apiKey = process.env.BREVO_API_KEY;
 
-const emailApi = new Brevo.TransactionalEmailsApi();
+const emailApi = new SibApiV3Sdk.TransactionalEmailsApi();
 
 async function sendEmail(to, subject, html) {
     console.log("Sending email to", to);
