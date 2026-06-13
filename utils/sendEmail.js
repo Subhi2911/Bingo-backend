@@ -1,21 +1,10 @@
-const nodemailer = require('nodemailer');
+const { Resend } = require('resend');
+
+const resend = new Resend(process.env.RESEND_API_KEY);
 
 async function sendEmail(to, subject, html) {
-    const transporter = nodemailer.createTransport({
-        host: "smtp.gmail.com",
-        port: 465,
-        secure: true,
-        auth: {
-            user: process.env.EMAIL_USER,
-            pass: process.env.EMAIL_PASS,
-        },
-    });
-
-    await transporter.verify();
-    console.log("SMTP connected");
-
-    await transporter.sendMail({
-        from: `"BingoBing" <${process.env.EMAIL_USER}>`,
+    await resend.emails.send({
+        from: 'BingoBing <onboarding@resend.dev>', // use this until you verify a domain
         to,
         subject,
         html
