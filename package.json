@@ -23,6 +23,7 @@
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.19.2",
     "nodemailer": "^7.0.10",
+    "resend": "^6.12.4",
     "socket.io": "^4.8.1"
   }
 }
