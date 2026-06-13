@@ -83,7 +83,7 @@ const httpServer = createServer(app);
 // Socket.IO
 const io = new Server(httpServer, {
   cors: {
-    origin: ["http://localhost:8081"],
+    origin: true,
     credentials: true,
   },
 });
@@ -93,7 +93,7 @@ app.set("io", io);
 connectToMongo();
 
 // Middleware
-app.use(cors({ origin: ["http://localhost:8081"], credentials: true }));
+app.use(cors({ origin: true, credentials: true }));
 app.use(express.json());
 
 // Routes
