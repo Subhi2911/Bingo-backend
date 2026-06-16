@@ -46,12 +46,12 @@ const UserSchema = mongoose.Schema({
     }],
     wins: {
         classic: { type: Number },
-        fast:    { type: Number },
-        power:   { type: Number },
+        fast: { type: Number },
+        power: { type: Number },
         private: { type: Number }
     },
-    otp:         String,
-    otpExpiry:   Date,
+    otp: String,
+    otpExpiry: Date,
     otpVerified: { type: Boolean, default: false },
     money: {
         type: Number,
@@ -71,7 +71,7 @@ const UserSchema = mongoose.Schema({
         type: Date,
         default: null
     },
-    lastSessionAt:     Date,
+    lastSessionAt: Date,
     dailySessionCount: Number,
     daysLoggedIn: {
         type: Number,
@@ -98,7 +98,7 @@ const UserSchema = mongoose.Schema({
         type: String,
         default: null
     },
-    lastSpin:        { type: Date },
+    lastSpin: { type: Date },
     doubleCoinsTill: { type: Date },
     fcmToken: {
         type: String,
@@ -107,30 +107,39 @@ const UserSchema = mongoose.Schema({
 
     // ── Shop: coin-purchased skins ────────────────────────────────────────────
     ownedBoards: {
-        type:    [String],
+        type: [String],
         default: ['classic'],       // everyone starts with classic
     },
     ownedDaubs: {
-        type:    [String],
+        type: [String],
         default: ['daub'],          // everyone starts with same
     },
 
     // ── Shop: real-money consumables ──────────────────────────────────────────
-    extraDaubs:    { type: Number, default: 0 },
-    xpBoosts:      { type: Number, default: 0 },
+    extraDaubs: { type: Number, default: 0 },
+    xpBoosts: { type: Number, default: 0 },
     instantClaims: { type: Number, default: 0 },
-    spins:         { type: Number, default: 0 },
+    spins: { type: Number, default: 0 },
 
     // ── Purchase history (real money only) ────────────────────────────────────
     purchaseHistory: [
         {
-            itemId:      Number,
-            itemName:    String,
-            paymentId:   String,
+            itemId: Number,
+            itemName: String,
+            paymentId: String,
             purchasedAt: { type: Date, default: Date.now },
         }
     ],
+    isFrozen: { type: Boolean, default: false },
+    freezeReason: { type: String, default: null },      // 'reported' | 'wrongful_report'
+    freezeUntil: { type: Date, default: null },        // null = indefinite (admin decides)
+    freezeMessage: { type: String, default: null },      // shown to user in app
+    frozenCount:{
+        type: Number,
+        default:0
+    }
 });
+
 
 const User = mongoose.model('User', UserSchema);
 module.exports = User;

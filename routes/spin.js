@@ -2,6 +2,7 @@ const express = require("express");
 const router = express.Router();
 const User = require("../models/User");
 const fetchuser = require("../middleware/fetchuser");
+const checkFrozen = require('../middleware/checkFrozen');
 
 
 const rewards = [
@@ -25,7 +26,7 @@ router.get("/rewards", (req, res) => {
 });
 
 // SPIN
-router.post("/spin", fetchuser, async (req, res) => {
+router.post("/spin", fetchuser, checkFrozen, async (req, res) => {
     try {
         const userId = req.user.id; // from auth middleware
         const user = await User.findById(userId);

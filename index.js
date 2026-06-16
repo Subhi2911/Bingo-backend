@@ -15,6 +15,7 @@ const { createServer } = require("http");
 const { Server } = require("socket.io");
 const Room = require("./models/Room");
 const { decrypt } = require("./utils/encryption");
+const reportRoutes = require("./routes/report");
 
 const { incrementMissionProgress, setMissionProgress, resetStreakOnLoss } = require("./utils/missionProgress");
 const safeDecrypt = (text) => {
@@ -109,6 +110,7 @@ app.use("/api/notifications", require("./routes/notification"));
 app.use('/api/spin', require("./routes/spin"));
 app.use('/api/shop', require("./routes/shop"));
 app.use('/api/missions', require("./routes/missions"));
+app.use('/api/report', reportRoutes(io));
 
 // ─────────────────────────────────────────────
 // SOCKET.IO

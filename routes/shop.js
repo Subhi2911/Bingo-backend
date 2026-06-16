@@ -2,6 +2,7 @@ const express  = require('express');
 const router   = express.Router();
 const fetchuser     = require('../middleware/fetchuser');
 const User     = require('../models/User');
+const checkFrozen = require('../middleware/checkFrozen');
 
 // ─── Valid skin IDs (whitelist to prevent junk data) ─────────────────────────
 const VALID_BOARDS = ['classic', 'ocean', 'forest', 'galaxy', 'candy', 'lava'];
@@ -12,7 +13,7 @@ const DAUB_PRICES  = { star: 0, flame: 200, ice: 250, crown: 350, thunder: 450, 
 
 // ─── POST /api/shop/buy-skin ──────────────────────────────────────────────────
 // Purchase a board skin or daub style using user.money (game coins)
-router.post('/buy-skin', fetchuser, async (req, res) => {
+router.post('/buy-skin', fetchuser, checkFrozen, async (req, res) => {
     try {
         const { skinId, skinType } = req.body;
 
@@ -68,7 +69,7 @@ router.post('/buy-skin', fetchuser, async (req, res) => {
 
 // ─── GET /api/shop/my-skins ───────────────────────────────────────────────────
 // Fetch owned skins on app load (so AsyncStorage stays in sync with DB)
-router.get('/my-skins', fetchuser, async (req, res) => {
+router.get('/my-skins', fetchuser, checkFrozen, async (req, res) => {
     try {
         const user = await User.findById(req.user.id).select('money ownedBoards ownedDaubs');
         if (!user) return res.status(404).json({ message: 'User not found' });
@@ -87,7 +88,7 @@ router.get('/my-skins', fetchuser, async (req, res) => {
 // ─── POST /api/shop/buy-real ──────────────────────────────────────────────────
 // Called after successful Razorpay/payment gateway verification
 // Grants the reward to the user server-side
-// router.post('/buy-real', fetchuser, async (req, res) => {
+// router.post('/buy-real', fetchuser, checkFrozen, async (req, res) => {
 //     try {
 //         const { itemId, razorpayPaymentId, razorpayOrderId, razorpaySignature } = req.body;
 
@@ -166,7 +167,7 @@ router.get('/my-skins', fetchuser, async (req, res) => {
 
 // ─── POST /api/shop/create-order ─────────────────────────────────────────────
 // Creates a Razorpay order — frontend opens payment modal with this
-// router.post('/create-order', fetchuser, async (req, res) => {
+// router.post('/create-order', fetchuser, checkFrozen, async (req, res) => {
 //     try {
 //         const { itemId } = req.body;
 

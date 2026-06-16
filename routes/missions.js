@@ -4,9 +4,10 @@ const Mission = require('../models/Missions');
 const UserMission = require('../models/UserMissions');
 const User = require('../models/User');
 const fetchuser = require('../middleware/fetchuser');
+const checkFrozen= require('../middleware/checkFrozen');
 
 // GET /api/missions
-router.get('/', fetchuser, async (req, res) => {
+router.get('/', fetchuser, checkFrozen, async (req, res) => {
   try {
     const userId = req.user._id;
 
@@ -46,7 +47,7 @@ router.get('/', fetchuser, async (req, res) => {
 });
 
 // POST /api/missions/:missionId/claim
-router.post('/:missionId/claim', fetchuser, async (req, res) => {
+router.post('/:missionId/claim', fetchuser, checkFrozen, async (req, res) => {
   try {
     const userId = req.user._id;
     const missionId = parseInt(req.params.missionId);

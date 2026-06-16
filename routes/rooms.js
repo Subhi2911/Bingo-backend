@@ -1,10 +1,11 @@
 const express = require('express');
 const router = express.Router();
 const Room = require('../models/Room');
-const fetchuser = require('../middleware/fetchuser'); // optional auth middleware
+const fetchuser = require('../middleware/fetchuser'); 
+const checkFrozen = require('../middleware/checkFrozen');
 
 // GET /api/rooms/:roomCode
-router.get('/:roomCode', fetchuser, async (req, res) => {
+router.get('/:roomCode', fetchuser, checkFrozen, async (req, res) => {
     try {
 
         const { roomCode } = req.params;

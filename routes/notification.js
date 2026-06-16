@@ -2,9 +2,10 @@ const router = require("express").Router();
 const Notification = require("../models/Notification");
 const fetchuser = require("../middleware/fetchuser");
 const { decrypt } = require("../utils/encryption");
+const checkFrozen = require('../middleware/checkFrozen');
 
 // GET all notifications for a user
-router.get("/", fetchuser, async (req, res) => {
+router.get("/", fetchuser, checkFrozen, async (req, res) => {
   try {
     const notifications = await Notification.find({ user: req.user.id })
       .sort({ createdAt: -1 });
@@ -15,7 +16,7 @@ router.get("/", fetchuser, async (req, res) => {
 });
 
 // MARK A NOTIFICATION AS READ
-router.patch("/:id/read", fetchuser, async (req, res) => {
+router.patch("/:id/read", fetchuser, checkFrozen, async (req, res) => {
   try {
     const notification = await Notification.findById(req.params.id);
     if (!notification) return res.status(404).json({ error: "Notification not found" });

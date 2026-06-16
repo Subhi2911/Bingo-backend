@@ -7,12 +7,13 @@ const Room = require("../models/Room");
 const mongoose = require("mongoose");
 const { updateProgressWithXP } = require('../utils/levelSystem');
 const { setMissionProgress, } = require("../utils/missionProgress");
+const checkFrozen = require('../middleware/checkFrozen');
 
 
-router.post("/daily-claim", fetchuser, claimDailyReward);
+router.post("/daily-claim", fetchuser, checkFrozen, claimDailyReward);
 
 
-router.get("/gamehistory", fetchuser, async (req, res) => {
+router.get("/gamehistory", fetchuser, checkFrozen, async (req, res) => {
     try {
         const userId = String(req.user.id);
 
@@ -61,7 +62,7 @@ const getTimeBonus = (seconds, gameType) => {
 
 
 // POST /api/game/update-progress
-router.post('/update-progress', fetchuser, async (req, res) => {
+router.post('/update-progress', fetchuser, checkFrozen, async (req, res) => {
     const { gameId, didWin, gameType, playerCount, duration } = req.body;
 
     if (!gameId) {
@@ -116,7 +117,7 @@ router.post('/update-progress', fetchuser, async (req, res) => {
 });
 
 // routes/leaderboard.js
-router.get('/leaderboard', fetchuser, async (req, res) => {
+router.get('/leaderboard', fetchuser, checkFrozen, async (req, res) => {
     try {
         const userId = req.user.id;
 

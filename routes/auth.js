@@ -7,6 +7,7 @@ const { body, validationResult } = require('express-validator');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const fetchuser = require('../middleware/fetchuser');
+const checkFrozen = require('../middleware/checkFrozen')
 const User = require("../models/User");
 const Notification = require("../models/Notification")
 
@@ -210,7 +211,7 @@ router.put('/reset-password', async (req, res) => {
 });
 
 
-router.get("/me", fetchuser, getMe);
+router.get("/me", fetchuser, checkFrozen, getMe);
 
 //get other user info
 router.get("/user/:id", async (req, res) => {
@@ -228,7 +229,7 @@ router.get("/user/:id", async (req, res) => {
 });
 
 //sending request
-router.post("/send-request/:id", fetchuser, async (req, res) => {
+router.post("/send-request/:id", fetchuser, checkFrozen, async (req, res) => {
 	try {
 		let success = false;
 		const toUserId = req.params.id;
@@ -257,7 +258,7 @@ router.post("/send-request/:id", fetchuser, async (req, res) => {
 });
 
 //accepting request
-router.post("/accept-request/:id", fetchuser, async (req, res) => {
+router.post("/accept-request/:id", fetchuser, checkFrozen, async (req, res) => {
 	try {
 		const fromUserId = req.params.id;
 		const toUserId = req.user.id;
@@ -293,7 +294,7 @@ router.post("/accept-request/:id", fetchuser, async (req, res) => {
 });
 
 //rejecting request
-router.post("/reject-request/:id", fetchuser, async (req, res) => {
+router.post("/reject-request/:id", fetchuser, checkFrozen, async (req, res) => {
 	try {
 		const fromUserId = req.params.id;
 		const toUserId = req.user.id;
@@ -322,7 +323,7 @@ router.post("/reject-request/:id", fetchuser, async (req, res) => {
 });
 
 //getFreinds
-router.get("/friends", fetchuser, async (req, res) => {
+router.get("/friends", fetchuser, checkFrozen, async (req, res) => {
 	try {
 		const userId = req.user.id;
 		const user = await User.findById(userId).populate('friends', 'avatar  username  email  date  bio  pendingRequests  sentRequests  wins  money  level  totalXp  rank');
@@ -334,7 +335,7 @@ router.get("/friends", fetchuser, async (req, res) => {
 	}
 });
 //getPendingRequests
-router.get("/pending-requests", fetchuser, async (req, res) => {
+router.get("/pending-requests", fetchuser, checkFrozen, async (req, res) => {
 	try {
 		const userId = req.user.id;
 		const user = await User.findById(userId).populate('pendingRequests', 'avatar  username  email  date  bio  friends  sentRequests  wins  money  level  totalXp   rank');
@@ -346,7 +347,7 @@ router.get("/pending-requests", fetchuser, async (req, res) => {
 });
 
 //remove friend
-router.post("/remove-friend/:id", fetchuser, async (req, res) => {
+router.post("/remove-friend/:id", fetchuser, checkFrozen, async (req, res) => {
 	try {
 		const removeUserId = req.params.id;
 		const userId = req.user.id;
@@ -367,7 +368,7 @@ router.post("/remove-friend/:id", fetchuser, async (req, res) => {
 });
 
 // GET /api/auth/search-user?q=TEXT
-router.get("/search-user", fetchuser, async (req, res) => {
+router.get("/search-user", fetchuser, checkFrozen, async (req, res) => {
 	try {
 		const q = req.query.q;
 
@@ -391,7 +392,7 @@ router.get("/search-user", fetchuser, async (req, res) => {
 	}
 });
 // routes/avatar.js
-router.post("/select", fetchuser, async (req, res) => {
+router.post("/select", fetchuser, checkFrozen, async (req, res) => {
 	try {
 		const { avatar } = req.body;
 
@@ -406,7 +407,7 @@ router.post("/select", fetchuser, async (req, res) => {
 			return res.status(403).json({ error: "Avatar already selected" });
 		}
 
-		user.avatar = avatar;
+		user.avatar = avatar || '🐵';
 		user.avatarLocked = true;   // lock forever
 		await user.save();
 
@@ -421,7 +422,7 @@ router.post("/select", fetchuser, async (req, res) => {
 });
 
 //save fcm
-router.post("/save-fcm-token", fetchuser, async (req, res) => {
+router.post("/save-fcm-token", fetchuser, checkFrozen, async (req, res) => {
 	try {
 		const { fcmToken } = req.body;
 
@@ -457,7 +458,7 @@ router.post("/save-fcm-token", fetchuser, async (req, res) => {
 });
 
 //change avatar and deduct money
-router.post("/change-avatar", fetchuser, async (req, res) => {
+router.post("/change-avatar", fetchuser, checkFrozen, async (req, res) => {
 	try {
 		const { avatar } = req.body;
 		const user = await User.findById(req.user.id);
@@ -466,6 +467,10 @@ router.post("/change-avatar", fetchuser, async (req, res) => {
 		}
 		user.avatar = avatar;
 		user.money -= 2000;
+		user.level = 0;
+		user.totalXp = 0;
+		user.levelXp = 0;
+		user.stars = 0;
 		await user.save();
 		res.json({ success: true, avatar: user.avatar, money: user.money });
 	} catch (error) {
@@ -475,7 +480,7 @@ router.post("/change-avatar", fetchuser, async (req, res) => {
 });
 
 //delete account
-router.delete("/delete-account", fetchuser, async (req, res) => {
+router.delete("/delete-account", fetchuser, checkFrozen, async (req, res) => {
 	try {
 		const userId = req.user.id;
 
@@ -531,7 +536,7 @@ router.delete("/delete-account", fetchuser, async (req, res) => {
 });
 
 //change name/bio
-router.post("/update-profile", fetchuser, async (req, res) => {
+router.post("/update-profile", fetchuser, checkFrozen, async (req, res) => {
 	try {
 		const userId = req.user.id;
 
@@ -581,7 +586,7 @@ router.post("/update-profile", fetchuser, async (req, res) => {
 
 //change password
 // Requires auth token. Verifies current password, then sets new password.
-router.put('/change-password', fetchuser, async (req, res) => {
+router.put('/change-password', fetchuser, checkFrozen, async (req, res) => {
     const { currentPassword, newPassword } = req.body;
  
     if (!currentPassword || !newPassword) {
