@@ -45,21 +45,13 @@ const UserSchema = mongoose.Schema({
         ref: 'User',
     }],
     wins: {
-        classic: {
-            type: Number,
-        },
-        fast: {
-            type: Number,
-        },
-        power: {
-            type: Number,
-        },
-        private: {
-            type: Number,
-        }
+        classic: { type: Number },
+        fast:    { type: Number },
+        power:   { type: Number },
+        private: { type: Number }
     },
-    otp: String,
-    otpExpiry: Date,
+    otp:         String,
+    otpExpiry:   Date,
     otpVerified: { type: Boolean, default: false },
     money: {
         type: Number,
@@ -79,10 +71,8 @@ const UserSchema = mongoose.Schema({
         type: Date,
         default: null
     },
-
-    lastSessionAt: Date,      // last time counted
+    lastSessionAt:     Date,
     dailySessionCount: Number,
-
     daysLoggedIn: {
         type: Number,
         default: 0
@@ -108,14 +98,39 @@ const UserSchema = mongoose.Schema({
         type: String,
         default: null
     },
-    lastSpin: { type: Date },
+    lastSpin:        { type: Date },
     doubleCoinsTill: { type: Date },
     fcmToken: {
         type: String,
         default: ""
     },
 
-})
+    // ── Shop: coin-purchased skins ────────────────────────────────────────────
+    ownedBoards: {
+        type:    [String],
+        default: ['classic'],       // everyone starts with classic
+    },
+    ownedDaubs: {
+        type:    [String],
+        default: ['daub'],          // everyone starts with same
+    },
+
+    // ── Shop: real-money consumables ──────────────────────────────────────────
+    extraDaubs:    { type: Number, default: 0 },
+    xpBoosts:      { type: Number, default: 0 },
+    instantClaims: { type: Number, default: 0 },
+    spins:         { type: Number, default: 0 },
+
+    // ── Purchase history (real money only) ────────────────────────────────────
+    purchaseHistory: [
+        {
+            itemId:      Number,
+            itemName:    String,
+            paymentId:   String,
+            purchasedAt: { type: Date, default: Date.now },
+        }
+    ],
+});
 
 const User = mongoose.model('User', UserSchema);
 module.exports = User;

@@ -52,7 +52,33 @@ exports.claimDailyReward = async (req, res) => {
     }
 
     // ── Increment streak ─────────────────────────────────────────────
-    user.daysLoggedIn = (user.daysLoggedIn || 0) + 1;
+    const now1 = new Date();
+    const last = user.lastDailyClaim ? new Date(user.lastDailyClaim) : null;
+
+    if (!last) {
+      // First ever claim
+      user.daysLoggedIn = 1;
+    } else {
+      // Get midnight of today and midnight of last claim day
+      const todayMidnight = new Date(now1);
+      todayMidnight.setHours(0, 0, 0, 0);
+
+      const lastMidnight = new Date(last);
+      lastMidnight.setHours(0, 0, 0, 0);
+
+      const daysDiff = Math.round(
+        (todayMidnight - lastMidnight) / (1000 * 60 * 60 * 24)
+      );
+      if (daysDiff === 1) {
+        // Claimed on consecutive days — keep streak going
+        user.daysLoggedIn = (user.daysLoggedIn || 0) + 1;
+      } else {
+        // Missed one or more days — reset streak
+        user.daysLoggedIn = 1;
+      }
+    }
+    user.lastDailyClaim = now1;
+    await user.save();
 
     // ── Determine today's reward slot (1–7, cycling) ─────────────────
     // Use real calendar weekday: Mon=1 … Sun=7

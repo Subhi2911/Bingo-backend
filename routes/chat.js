@@ -6,6 +6,9 @@ const { encrypt, decrypt } = require("../utils/encryption");
 router.get("/user/:userId", async (req, res) => {
     try {
         const userId = req.params.userId;
+        const skip = parseInt(req.query.skip) || 0;
+        const limit = parseInt(req.query.limit) || 7;
+
         let chats = await Chat.find({ participants: userId })
             .populate('participants', 'username avatar bio')
             .populate({
@@ -15,13 +18,26 @@ router.get("/user/:userId", async (req, res) => {
                     select: "username"
                 }
             }).lean();
+
         chats = chats.map(chat => {
             if (chat.lastMessage?.text) {
                 chat.lastMessage.text = decrypt(chat.lastMessage.text);
             }
             return chat;
         });
-        res.status(200).json(chats);
+
+        // Most recent message first; chats with no messages yet sink to the bottom
+        chats.sort((a, b) => {
+            const aTime = a.lastMessage?.createdAt ? new Date(a.lastMessage.createdAt).getTime() : 0;
+            const bTime = b.lastMessage?.createdAt ? new Date(b.lastMessage.createdAt).getTime() : 0;
+            return bTime - aTime;
+        });
+
+        const total = chats.length;
+        const page = chats.slice(skip, skip + limit);
+        const hasMore = skip + limit < total;
+
+        res.status(200).json({ chats: page, hasMore });
     } catch (err) {
         res.status(500).json(err);
     }

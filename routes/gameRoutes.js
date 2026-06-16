@@ -6,6 +6,8 @@ const User = require("../models/User");
 const Room = require("../models/Room");
 const mongoose = require("mongoose");
 const { updateProgressWithXP } = require('../utils/levelSystem');
+const { setMissionProgress, } = require("../utils/missionProgress");
+
 
 router.post("/daily-claim", fetchuser, claimDailyReward);
 
@@ -61,7 +63,7 @@ const getTimeBonus = (seconds, gameType) => {
 // POST /api/game/update-progress
 router.post('/update-progress', fetchuser, async (req, res) => {
     const { gameId, didWin, gameType, playerCount, duration } = req.body;
-    
+
     if (!gameId) {
         return res.status(400).json({ error: "gameId required" });
     }
@@ -90,6 +92,8 @@ router.post('/update-progress', fetchuser, async (req, res) => {
     user.totalXp = result.totalXp;
     user.stars = result.stars;
 
+
+
     // 💰 money (safe)
     if (gameType && playerCount) {
         const costMap = { classic: 20, fast: 15, power: 40 };
@@ -103,6 +107,7 @@ router.post('/update-progress', fetchuser, async (req, res) => {
     }
 
     await user.save();
+    setMissionProgress(user._id, 'reach_level', result.level);
     res.json({
         ...result,
         oldXP: oldLevelXp,
@@ -115,30 +120,32 @@ router.get('/leaderboard', fetchuser, async (req, res) => {
     try {
         const userId = req.user.id;
 
-        // 🔹 Top 20 users by XP
+        const currentUser = await User.findById(userId).select('totalXp username avatar friends');
+        if (!currentUser) return res.status(404).json({ msg: 'User not found' });
+
+        // ── WORLD ──
         const topUsers = await User.find({})
             .sort({ totalXp: -1 })
             .limit(20)
             .select('username avatar totalXp');
 
-        // 🔹 Get current user's XP
-        const currentUser = await User.findById(userId).select('totalXp username avatar');
-
-        if (!currentUser) {
-            return res.status(404).json({ msg: 'User not found' });
-        }
-
-        // 🔹 Count how many users have MORE XP than this user
-        const higherXpCount = await User.countDocuments({
-            totalXp: { $gt: currentUser.totalXp }
-        });
-
+        const higherXpCount = await User.countDocuments({ totalXp: { $gt: currentUser.totalXp } });
         const userRank = higherXpCount + 1;
+
+        // ── FRIENDS ──
+        const friendIds = currentUser.friends || [];
+        const friendUsers = await User.find({ _id: { $in: [...friendIds, userId] } })
+            .sort({ totalXp: -1 })
+            .select('username avatar totalXp');
+
+        const friendRank = friendUsers.findIndex(u => u._id.toString() === userId.toString()) + 1;
 
         res.json({
             topUsers,
             userRank,
-            currentUser
+            currentUser,
+            friendUsers,
+            friendRank,
         });
 
     } catch (err) {

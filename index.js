@@ -15,6 +15,8 @@ const { createServer } = require("http");
 const { Server } = require("socket.io");
 const Room = require("./models/Room");
 const { decrypt } = require("./utils/encryption");
+
+const { incrementMissionProgress, setMissionProgress, resetStreakOnLoss } = require("./utils/missionProgress");
 const safeDecrypt = (text) => {
   try {
     if (!text || !text.includes(":")) return text;
@@ -105,6 +107,8 @@ app.use("/api/messages", require("./routes/messages"));
 app.use("/api/rooms", require("./routes/rooms"));
 app.use("/api/notifications", require("./routes/notification"));
 app.use('/api/spin', require("./routes/spin"));
+app.use('/api/shop', require("./routes/shop"));
+app.use('/api/missions', require("./routes/missions"));
 
 // ─────────────────────────────────────────────
 // SOCKET.IO
@@ -329,6 +333,8 @@ function handleUsePower(socket, io, { roomCode, userId, power, group, targetId, 
     if (!game.playerMarkedNumbers[userId]) game.playerMarkedNumbers[userId] = [];
     game.playerMarkedNumbers[userId].push(number);
     game.powerUsed[userId] = true;
+    incrementMissionProgress(userId, 'mark_numbers', 1);
+
     require("./models/Room").updateOne({ code: roomCode }, { $addToSet: { selected: number } }).catch(console.error);
     io.to(roomCode).emit("number_picked", game.picked);
     io.to(roomCode).emit("power_used", { power, userId, group: resolvedGroup, message: `👣 ${power} — free mark on ${number}!` });
@@ -344,6 +350,8 @@ function handleUsePower(socket, io, { roomCode, userId, power, group, targetId, 
     if (!game.playerMarkedNumbers[userId]) game.playerMarkedNumbers[userId] = [];
     game.playerMarkedNumbers[userId].push(randomNum);
     game.powerUsed[userId] = true;
+    incrementMissionProgress(userId, 'mark_numbers', 1);
+
     require("./models/Room").updateOne({ code: roomCode }, { $addToSet: { selected: randomNum } }).catch(console.error);
     io.to(roomCode).emit("number_picked", game.picked);
     io.to(roomCode).emit("power_used", { power, userId, group: resolvedGroup, message: `🎲 ${power} — random mark on ${randomNum}!` });
@@ -859,6 +867,8 @@ io.on("connection", (socket) => {
       if (!game.playerMarkedNumbers) game.playerMarkedNumbers = {};
       if (!game.playerMarkedNumbers[current.userId]) game.playerMarkedNumbers[current.userId] = [];
       game.playerMarkedNumbers[current.userId].push(number);
+      incrementMissionProgress(current.userId, 'mark_numbers', 1); 
+
 
       await Room.updateOne(
         { code: roomCode },
@@ -927,6 +937,11 @@ io.on("connection", (socket) => {
     delete turnTimers[roomCode];
 
     const losers = game.players.filter(p => p.userId !== winnerId);
+    const winType = gameType === 'classic' ? 'win_classic_games' : 'win_fast_games';
+    game.players.forEach(p => incrementMissionProgress(p.userId, 'play_games', 1));
+    incrementMissionProgress(winnerId, winType, 1);
+    incrementMissionProgress(winnerId, 'win_streak', 1);
+    losers.forEach(l => resetStreakOnLoss(l.userId, 'win_streak'));
     io.to(roomCode).emit("show_results", {
       winnerId,
       losers: losers.map(l => l.userId),
@@ -940,6 +955,7 @@ io.on("connection", (socket) => {
     }
 
     const winner = game.players.find(p => p.userId === winnerId);
+
     if (!winner) {
       console.error(`Winner not found for room ${roomCode}.`);
       return;
@@ -951,13 +967,12 @@ io.on("connection", (socket) => {
         if (!user.wins || typeof user.wins !== "object") {
           user.wins = { classic: 0, fast: 0, power: 0, private: 0 };
         }
-        // Fix the original bug: was `user.wins.gameType` (always undefined)
         if (user.wins[gameType] !== undefined) {
           user.wins[gameType] += 1;
         } else {
-          user.wins.power = (user.wins.power || 0) + 1; // fallback
+          user.wins.power = (user.wins.power || 0) + 1;
         }
-        await user.save();
+
       }
     } catch (err) {
       console.error("Failed to update winner stats:", err);
@@ -1207,6 +1222,7 @@ io.on("connection", (socket) => {
   socket.on("sendMessage", async (message) => {
     const decryptedMessage = { ...message, text: safeDecrypt(message.text) };
     socket.to(message.chatId).emit("receiveMessage", decryptedMessage);
+    incrementMissionProgress(message.sender._id, 'send_messages', 1);
 
     const chat = await Chat.findById(message.chatId);
     const receivers = chat.participants.filter(
