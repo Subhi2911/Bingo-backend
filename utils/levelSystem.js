@@ -23,14 +23,13 @@ const updateProgressWithXP = (
 
     const baseXP = XP_MAP[gameType] || 0;
     const earnedXP = (didWin ? baseXP : -baseXP) + bonusXP;
-    console.log(bonusXP);
 
-    // ✅ Total XP only increases
+    // Total XP only increases
     if (earnedXP > 0) {
         totalXp += earnedXP;
     }
 
-    // ✅ Level XP rolls forward/backward
+    // Level XP rolls forward/backward
     levelXp += earnedXP;
 
     // Clamp level 1
@@ -38,19 +37,19 @@ const updateProgressWithXP = (
         levelXp = 0;
     }
 
-    // 🔼 Level up (rollover XP)
+    // Level up (rollover XP)
     while (levelXp >= XP_PER_LEVEL && level < MAX_LEVEL) {
         levelXp -= XP_PER_LEVEL;
         level++;
     }
 
-    // 🔽 Level down (optional but consistent)
+    // Level down (optional but consistent)
     while (levelXp < 0 && level > 1) {
         level--;
         levelXp += XP_PER_LEVEL;
     }
 
-    // ⭐ Stars derived from level XP
+    // Stars derived from level XP
     const stars = Math.floor(
         (levelXp / XP_PER_LEVEL) * MAX_STARS
     );

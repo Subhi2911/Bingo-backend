@@ -1,11 +1,11 @@
 module.exports = (io) => {
   io.on("connection", (socket) => {
-    console.log("User connected:", socket.id);
+    //console.log("User connected:", socket.id);
 
     // Chat room joining
     socket.on("joinChat", (chatId) => {
       socket.join(chatId);
-      console.log(`Socket ${socket.id} joined chat ${chatId}`);
+      //console.log(`Socket ${socket.id} joined chat ${chatId}`);
     });
 
     // Sending messages
@@ -21,7 +21,7 @@ module.exports = (io) => {
 
     
     socket.on("disconnect", () => {
-      console.log("User disconnected:", socket.id);
+      //console.log("User disconnected:", socket.id);
     });
   });
 };

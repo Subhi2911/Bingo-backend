@@ -1,7 +1,7 @@
 module.exports = (io) => {
 
     io.on("connection", (socket) => {
-        console.log("User connected:", socket.id);
+        //console.log("User connected:", socket.id);
 
         // join room
         socket.on("join_room", (roomCode) => {
@@ -15,7 +15,7 @@ module.exports = (io) => {
 
 
         socket.on("disconnect", () => {
-            console.log("User disconnected:", socket.id);
+            //console.log("User disconnected:", socket.id);
         });
     });
 

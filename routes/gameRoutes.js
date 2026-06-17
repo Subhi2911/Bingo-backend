@@ -206,5 +206,63 @@ router.get("/ranking", async (req, res) => {
     }
 });
 
+// GET /api/games/ranking/friends
+router.get("/rank/friends", fetchuser, async (req, res) => {
+    try {
+        const currentUser = await User.findById(req.user.id).select("friends");
+        
+        if (!currentUser) {
+            return res.status(404).json({ error: "User not found" });
+        }
+
+        // Pool = the requesting user + their friends
+        const friendIds = [req.user.id, ...(currentUser.friends || [])];
+
+        const users = await User.find({ _id: { $in: friendIds } });
+
+        const avatarMap = {};
+
+        users.forEach(user => {
+            const avatar = user.avatar;
+
+            if (!avatarMap[avatar]) {
+                avatarMap[avatar] = {
+                    avatar,
+                    totalXp: 0,
+                    users: []
+                };
+            }
+
+            avatarMap[avatar].totalXp += user.totalXp;
+
+            avatarMap[avatar].users.push({
+                name: user.username,
+                xp: user.totalXp,
+                level: user.level
+            });
+        });
+
+        let avatars = Object.values(avatarMap);
+
+        avatars.forEach(avatarGroup => {
+            avatarGroup.users.sort((a, b) => b.xp - a.xp);
+
+            avatarGroup.users = avatarGroup.users.map((user, index) => ({
+                ...user,
+                rank: index + 1
+            }));
+        });
+
+        avatars.sort((a, b) => b.totalXp - a.totalXp);
+
+        res.json({
+            avatarOfWeek: avatars[0] || null,
+            avatars
+        });
+
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
 
 module.exports = router;
