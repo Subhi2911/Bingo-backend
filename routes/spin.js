@@ -71,4 +71,25 @@ router.post("/spin", fetchuser, checkFrozen, async (req, res) => {
     }
 });
 
+// /status — add the extraSpins check alongside your existing cooldown check
+router.get("/status", fetchuser, async (req, res) => {
+    try {
+        const user = await User.findById(req.user.id);
+        if (!user) return res.status(404).json({ message: "User not found" });
+
+        const COOLDOWN_MS = 24 * 60 * 60 * 1000;
+        const now = Date.now();
+        const lastSpin = user.lastSpinAt ? new Date(user.lastSpinAt).getTime() : 0;
+        const dailySpinAvailable = now - lastSpin >= COOLDOWN_MS;
+        const hasExtraSpin = (user.extraSpins || 0) > 0;
+
+        const canSpin = dailySpinAvailable || hasExtraSpin;
+        const message = canSpin ? "" : "Come back tomorrow for your next spin!";
+
+        res.json({ canSpin, message, extraSpins: user.extraSpins || 0 });
+    } catch (err) {
+        res.status(500).json({ message: "Server error", error: err.message });
+    }
+});
+
 module.exports = router;

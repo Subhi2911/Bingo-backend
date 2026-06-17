@@ -111,6 +111,7 @@ app.use('/api/spin', require("./routes/spin"));
 app.use('/api/shop', require("./routes/shop"));
 app.use('/api/missions', require("./routes/missions"));
 app.use('/api/report', reportRoutes(io));
+app.use('/api/rewards' , require("./routes/adss"));
 
 // ─────────────────────────────────────────────
 // SOCKET.IO
