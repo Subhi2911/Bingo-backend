@@ -111,7 +111,9 @@ app.use('/api/spin', require("./routes/spin"));
 app.use('/api/shop', require("./routes/shop"));
 app.use('/api/missions', require("./routes/missions"));
 app.use('/api/report', reportRoutes(io));
-app.use('/api/rewards' , require("./routes/adss"));
+app.use('/api/rewards', require("./routes/adss"));
+app.use('/api/payments', require("./routes/payments"));
+app.use('/api/gifts', require('./routes/gift'));
 
 // ─────────────────────────────────────────────
 // SOCKET.IO
@@ -870,7 +872,7 @@ io.on("connection", (socket) => {
       if (!game.playerMarkedNumbers) game.playerMarkedNumbers = {};
       if (!game.playerMarkedNumbers[current.userId]) game.playerMarkedNumbers[current.userId] = [];
       game.playerMarkedNumbers[current.userId].push(number);
-      incrementMissionProgress(current.userId, 'mark_numbers', 1); 
+      incrementMissionProgress(current.userId, 'mark_numbers', 1);
 
 
       await Room.updateOne(
@@ -945,6 +947,12 @@ io.on("connection", (socket) => {
     incrementMissionProgress(winnerId, winType, 1);
     incrementMissionProgress(winnerId, 'win_streak', 1);
     losers.forEach(l => resetStreakOnLoss(l.userId, 'win_streak'));
+
+    User.updateMany(
+      { _id: { $in: game.players.map(p => p.userId) } },
+      { $inc: { totalGamesPlayed: 1 } }
+    ).catch(err => console.error("Failed to update totalGamesPlayed:", err));
+
     io.to(roomCode).emit("show_results", {
       winnerId,
       losers: losers.map(l => l.userId),
@@ -1420,4 +1428,5 @@ io.on("connection", (socket) => {
 // ─────────────────────────────────────────────
 httpServer.listen(port, () => {
   console.log(`🚀 Server running at http://localhost:${port}`);
+  console.log(`💳 Razorpay: ${process.env.RAZORPAY_KEY_ID ? 'Configured ✓' : 'Not configured ✗'}`);
 });

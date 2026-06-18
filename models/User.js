@@ -130,13 +130,20 @@ const UserSchema = mongoose.Schema({
             purchasedAt: { type: Date, default: Date.now },
         }
     ],
+    weeklyClaims: {
+        type: [Boolean],
+        default: [false, false, false, false, false, false, false], // index 0=Mon ... 6=Sun
+    },
+    weekAnchor: { type: Date, default: null }, // Monday 00:00 of the tracked week
+    streak: { type: Number, default: 0 },      // actual consecutive-day streak
+    totalGamesPlayed: { type: Number, default: 0 },
     isFrozen: { type: Boolean, default: false },
     freezeReason: { type: String, default: null },      // 'reported' | 'wrongful_report'
     freezeUntil: { type: Date, default: null },        // null = indefinite (admin decides)
     freezeMessage: { type: String, default: null },      // shown to user in app
-    frozenCount:{
+    frozenCount: {
         type: Number,
-        default:0
+        default: 0
     }
 });
 

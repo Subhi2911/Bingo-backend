@@ -28,7 +28,7 @@ async function incrementMissionProgress(userId, type, amount = 1) {
             }
         }
     } catch (err) {
-        console.error('incrementMissionProgress failed:', err);
+        console.log('incrementMissionProgress failed:', err);
     }
 }
 
@@ -42,7 +42,7 @@ async function resetStreakOnLoss(userId, type) {
             );
         }
     } catch (err) {
-        console.error('resetStreakOnLoss failed:', err);
+        console.log('resetStreakOnLoss failed:', err);
     }
 }
 
@@ -62,7 +62,7 @@ async function setMissionProgress(userId, type, value) {
             }
         }
     } catch (err) {
-        console.error('setMissionProgress failed:', err);
+        console.log('setMissionProgress failed:', err);
     }
 }
 
