@@ -12,7 +12,7 @@ const rewards = [
     { label: "500 Coins", type: "coins", value: 500 },
 
     { label: "10 XP", type: "xp", value: 10 },
-    { label: "+1 Star ⭐", type: "xp", value: 20 },
+    { label: "+1 Star ⭐", type: "levelxp", value: 20 },
     { label: "50 XP", type: "xp", value: 50 },
 
     { label: "Nothing 😢", type: "none", value: 0 },
@@ -35,10 +35,16 @@ router.post("/spin", fetchuser, checkFrozen, async (req, res) => {
         if (user.lastSpin) {
             const diff = Date.now() - new Date(user.lastSpin).getTime();
             const hours = diff / (1000 * 60 * 60);
-            if (hours < 24) {
+            const hasExtraSpin = (user.extraSpins || 0) > 0;
+
+            if (hours < 24 && !hasExtraSpin) {
                 return res.status(400).json({
                     message: "You can spin only once in 24 hours"
                 });
+            }
+
+            if (hours < 24 && hasExtraSpin) {
+                user.extraSpins -= 1;
             }
         }
 
@@ -79,7 +85,7 @@ router.get("/status", fetchuser, async (req, res) => {
 
         const COOLDOWN_MS = 24 * 60 * 60 * 1000;
         const now = Date.now();
-        const lastSpin = user.lastSpinAt ? new Date(user.lastSpinAt).getTime() : 0;
+        const lastSpin = user.lastSpin ? new Date(user.lastSpin).getTime() : 0;
         const dailySpinAvailable = now - lastSpin >= COOLDOWN_MS;
         const hasExtraSpin = (user.extraSpins || 0) > 0;
 
@@ -89,6 +95,26 @@ router.get("/status", fetchuser, async (req, res) => {
         res.json({ canSpin, message, extraSpins: user.extraSpins || 0 });
     } catch (err) {
         res.status(500).json({ message: "Server error", error: err.message });
+    }
+});
+
+router.post("/grant-extra", fetchuser, async (req, res) => {
+    try {
+        const user = await User.findById(req.user.id);
+
+        user.extraSpins = (user.extraSpins || 0) + 1;
+
+        await user.save();
+
+        res.json({
+            success: true,
+            extraSpins: user.extraSpins,
+        });
+    } catch (err) {
+        res.status(500).json({
+            success: false,
+            error: err.message,
+        });
     }
 });
 

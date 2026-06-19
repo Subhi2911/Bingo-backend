@@ -99,6 +99,7 @@ const UserSchema = mongoose.Schema({
         default: null
     },
     lastSpin: { type: Date },
+    extraSpins:{ type: Number , default:0},
     doubleCoinsTill: { type: Date },
     fcmToken: {
         type: String,
